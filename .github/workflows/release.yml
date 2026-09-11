@@ -27,9 +27,7 @@ jobs:
       contents: write
     env:
       RELEASE_TAG: ${{ github.ref_name }}
-      RELEASE_DIR: ${{ runner.temp }}/ai-usage-release
       NOTARYTOOL_PROFILE: ai-usage-notary
-      NOTARYTOOL_KEYCHAIN: ${{ runner.temp }}/ai-usage-signing.keychain-db
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -37,12 +35,20 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Set release paths
+        run: |
+          printf 'RELEASE_DIR=%s\n' "$RUNNER_TEMP/ai-usage-release" >>"$GITHUB_ENV"
+          printf 'NOTARYTOOL_KEYCHAIN=%s\n' "$RUNNER_TEMP/ai-usage-signing.keychain-db" >>"$GITHUB_ENV"
+
       - name: Verify release source
         id: source
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          [[ "$GITHUB_REF_TYPE" == tag && "$RELEASE_TAG" =~ ^v[0-9]+(\.[0-9]+)*$ ]]
+          if [[ "$GITHUB_REF_TYPE" != tag || ! "$RELEASE_TAG" =~ ^v[0-9]+(\.[0-9]+)*$ ]]; then
+            printf 'Release requires a numeric version tag.\n' >&2
+            exit 1
+          fi
           commit=$(git rev-parse HEAD)
           [[ "$commit" == "$(git rev-parse "$GITHUB_SHA^{commit}")" ]]
           [[ "$commit" == "$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")" ]]

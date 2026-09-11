@@ -28,7 +28,7 @@ workflows.each do |workflow|
       end
       next unless step['run']
       check(!step['run'].include?('${{'), 'Pass GitHub context through environment variables')
-      _, error, status = Open3.capture3('bash', '-n', stdin_data: step['run'])
+      _, error, status = Open3.capture3({ 'BASH_ENV' => nil }, '/bin/bash', '--noprofile', '--norc', '-n', stdin_data: step['run'])
       check(status.success?, "Invalid shell syntax: #{error}")
     end
   end
@@ -96,12 +96,13 @@ Dir.mktmpdir('ai-usage-workflow-checks') do |directory|
   git.call('update-ref', 'refs/remotes/origin/main', commit)
   %w[v1.0 v2.0].each { |tag| git.call('tag', tag) }
   environment = {
-    'PATH' => "#{bin}:#{ENV.fetch('PATH')}", 'RUNNER_TEMP' => temporary, 'RELEASE_DIR' => artifacts,
+    'PATH' => "#{bin}:#{ENV.fetch('PATH')}", 'BASH_ENV' => nil, 'RUNNER_TEMP' => temporary, 'RELEASE_DIR' => artifacts,
     'GITHUB_SHA' => commit, 'GITHUB_REF_TYPE' => 'tag', 'GITHUB_REPOSITORY' => 'mock/repo',
     'RELEASE_TAG' => 'v1.0', 'MOCK_MODE' => 'accepted'
   }
   run = lambda do |script, overrides = {}|
-    Open3.capture3(environment.merge(overrides), 'bash', '-e', '-o', 'pipefail', '-c', script, chdir: directory)
+    # Actions uses Apple's Bash; Homebrew Bash has different errexit behavior for [[ ... && ... ]].
+    Open3.capture3(environment.merge(overrides), '/bin/bash', '--noprofile', '--norc', '-e', '-o', 'pipefail', '-c', script, chdir: directory)
   end
   output, error, status = run.call(source)
   check(status.success?, "Valid tag was rejected: #{output}#{error}")
