@@ -9,7 +9,6 @@ struct AIUsageApp: App {
     var body: some Scene {
         MenuBarExtra {
             UsagePanel(store: store)
-                .onAppear { store.refreshIfNeeded() }
         } label: {
             MenuBarLabel(store: store)
         }
@@ -39,11 +38,17 @@ private struct MenuBarLabel: View {
             ("ClaudeLogo", store.state(.claudeSession)),
             ("ChatGPTLogo", store.state(.codexWeekly))
         ]
+        let font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium)
+        let textWidths = values.map {
+            ($0.1.percentage as NSString).size(withAttributes: [.font: font]).width.rounded(.up)
+        }
+        let logoToTextGap: CGFloat = 3
+        let width = textWidths.reduce((14 + logoToTextGap) * 2 + 6, +)
         let appearance = NSAppearance(named: colorScheme == .dark ? .darkAqua : .aqua)!
-        let image = NSImage(size: NSSize(width: 118, height: 18), flipped: false) { _ in
+        let image = NSImage(size: NSSize(width: width, height: 18), flipped: false) { _ in
             appearance.performAsCurrentDrawingAppearance {
+                var x: CGFloat = 0
                 for (index, value) in values.enumerated() {
-                    let x = CGFloat(index) * 66
                     if let logo = NSImage(named: value.0) {
                         let rect = NSRect(x: x, y: 2, width: 14, height: 14)
                         NSGraphicsContext.saveGraphicsState()
@@ -53,14 +58,15 @@ private struct MenuBarLabel: View {
                         NSGraphicsContext.restoreGraphicsState()
                     }
                     let attributes: [NSAttributedString.Key: Any] = [
-                        .font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium),
+                        .font: font,
                         .foregroundColor: value.1.color
                     ]
-                    (value.1.percentage as NSString).draw(at: NSPoint(x: x + 18, y: 1.5), withAttributes: attributes)
+                    (value.1.percentage as NSString).draw(at: NSPoint(x: x + 14 + logoToTextGap, y: 1.5), withAttributes: attributes)
                     if value.1.isStale {
                         NSColor.systemOrange.setFill()
-                        NSBezierPath(ovalIn: NSRect(x: x + 11, y: 0, width: 4, height: 4)).fill()
+                        NSBezierPath(ovalIn: NSRect(x: x + 10, y: 0, width: 4, height: 4)).fill()
                     }
+                    x += 14 + logoToTextGap + textWidths[index] + 6
                 }
             }
             return true
@@ -72,14 +78,11 @@ private struct MenuBarLabel: View {
 
 private struct UsagePanel: View {
     @ObservedObject var store: UsageStore
+    @State private var isQuitHovered = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            HStack {
-                Text("AI Usage").font(.headline)
-                Spacer()
-                Text("USED").font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
-            }
+            Text("AI Usage Remaining").font(.headline)
 
             providerSection(.claude, title: "Claude", logo: "ClaudeLogo")
             Divider()
@@ -88,27 +91,29 @@ private struct UsagePanel: View {
 
             HStack(spacing: 12) {
                 if !store.refreshing.isEmpty {
-                    ProgressView().controlSize(.small)
+                    ProgressView()
+                        .progressViewStyle(.circular)
+                        .controlSize(.small)
+                        .accessibilityLabel("Refreshing usage")
                     Text("Updating…").font(.caption).foregroundStyle(.secondary)
                 } else if let date = store.lastAttempt {
                     Text("Checked \(date, style: .time)").font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 0)
-                Button { store.refresh() } label: {
-                    Image(systemName: "arrow.clockwise")
-                }
-                .help("Refresh usage")
-                .accessibilityLabel("Refresh usage")
-                .keyboardShortcut("r")
-                .disabled(!store.refreshing.isEmpty)
-
                 Button("Quit") {
                     store.stop()
                     NSApplication.shared.terminate(nil)
                 }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .overlay {
+                    RoundedRectangle(cornerRadius: 5)
+                        .fill(.primary.opacity(isQuitHovered ? 0.08 : 0))
+                        .allowsHitTesting(false)
+                }
+                .onHover { isQuitHovered = $0 }
                 .keyboardShortcut("q")
             }
-            .buttonStyle(.borderless)
         }
         .padding(18)
         .frame(width: 320)
@@ -152,7 +157,7 @@ private struct UsageRow: View {
                     .font(.system(size: 12, weight: .semibold).monospacedDigit())
                     .foregroundStyle(Color(nsColor: state.color))
             }
-            ProgressView(value: state.reading?.usedPercent ?? 0, total: 100)
+            ProgressView(value: state.reading?.remainingPercent ?? 0, total: 100)
                 .tint(Color(nsColor: state.color))
                 .opacity(state.reading == nil ? 0.3 : 1)
                 .accessibilityHidden(true)
@@ -165,6 +170,6 @@ private struct UsageRow: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(metric.accessibilityName)
-        .accessibilityValue(state.reading == nil ? "Unavailable" : "\(state.percentage) used\(state.isStale ? ", stale" : ""). \(state.reading?.resetDescription ?? "")")
+        .accessibilityValue(state.reading == nil ? "Unavailable" : "\(state.percentage) remaining\(state.isStale ? ", stale" : ""). \(state.reading?.resetDescription ?? "")")
     }
 }

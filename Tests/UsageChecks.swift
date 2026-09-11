@@ -54,16 +54,27 @@ struct UsageChecks {
         for (percent, expected) in [(49.0, NSColor.systemGreen), (49.5, .systemGreen), (50, .systemOrange), (79, .systemOrange), (79.5, .systemOrange), (80, .systemRed)] {
             assert(MetricState(reading: UsageReading(usedPercent: percent, resetDescription: nil), updatedAt: Date()).color == expected)
         }
+        assert(MetricState(reading: UsageReading(usedPercent: 30, resetDescription: nil), updatedAt: Date()).percentage == "70%")
         assert(MetricState().color == .secondaryLabelColor)
         assert(MetricState(reading: UsageReading(usedPercent: 80, resetDescription: nil), updatedAt: .distantPast).color == .secondaryLabelColor)
         print("Usage parser checks passed.")
 
-        if CommandLine.arguments.contains("--lifecycle") { await checkLifecycle() }
+        if CommandLine.arguments.contains("--lifecycle") {
+            await checkLifecycle()
+            await checkShellPath()
+        }
 
         if CommandLine.arguments.contains("--live") {
+            let path: String
+            switch await ShellPath.load() {
+            case .success(let captured): path = captured
+            case .failure(let error):
+                print(error.localizedDescription)
+                exit(1)
+            }
             var failed = false
             for provider in UsageProvider.allCases {
-                let result = await UsageClient.fetch(provider)
+                let result = await UsageClient.fetch(provider, path: path)
                 for metric in UsageMetric.allCases {
                     if let reading = result.readings[metric] {
                         print("\(metric.rawValue): \(reading.usedPercent)% used; resets \(reading.resetDescription ?? "unavailable")")
@@ -127,5 +138,66 @@ struct UsageChecks {
         let earlyExit = await UsageClient.fetch(.codex)
         assert(earlyExit.readings.isEmpty && earlyExit.error != nil)
         print("CLI PATH, cancellation, child cleanup, and early-exit checks passed.")
+        await checkRefresh(in: directory)
+    }
+
+    @MainActor
+    static func checkRefresh(in directory: URL) async {
+        setenv("AI_USAGE_TEST_DIRECTORY", directory.path, 1)
+        defer { unsetenv("AI_USAGE_TEST_DIRECTORY") }
+        let claude = directory.appendingPathComponent("claude")
+        try! #"""
+        #!/bin/sh
+        i=1
+        while ! /bin/mkdir "$AI_USAGE_TEST_DIRECTORY/request-$i" 2>/dev/null; do
+            i=$((i + 1))
+        done
+        printf '%s' "$$" > "$AI_USAGE_TEST_DIRECTORY/request-$i/pid"
+        while [ ! -e "$AI_USAGE_TEST_DIRECTORY/release-$i" ]; do /bin/sleep 0.02; done
+        printf 'Current session: %s%% used\nCurrent week (all models): 19%% used\nCurrent week (Fable): 34%% used\n' "$((i * 10))"
+        """#.write(to: claude, atomically: true, encoding: .utf8)
+        try! FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: claude.path)
+        let store = UsageStore(shellPath: Task { .success(directory.path) })
+        defer { store.stop() }
+
+        // Startup and two immediate menu openings must all start a request.
+        for request in 1...3 {
+            if request > 1 {
+                NotificationCenter.default.post(name: NSWindow.didBecomeKeyNotification, object: nil)
+            }
+            await waitUntil {
+                FileManager.default.fileExists(atPath: directory.appendingPathComponent("request-\(request)/pid").path)
+            }
+        }
+        assert(store.refreshing.contains(.claude))
+        try! Data().write(to: directory.appendingPathComponent("release-3"))
+        await waitUntil { store.state(.claudeSession).reading?.usedPercent == 30 }
+        for request in 1...2 {
+            try! Data().write(to: directory.appendingPathComponent("release-\(request)"))
+        }
+        await waitUntil { store.refreshing.isEmpty }
+        assert(store.state(.claudeSession).reading?.usedPercent == 30, "Older results must not overwrite the latest refresh")
+
+        // Quitting must also cancel every overlapping request.
+        var pids: [pid_t] = []
+        for request in 4...5 {
+            NotificationCenter.default.post(name: NSWindow.didBecomeKeyNotification, object: nil)
+            let file = directory.appendingPathComponent("request-\(request)/pid")
+            await waitUntil { pid_t((try? String(contentsOf: file, encoding: .utf8)) ?? "") != nil }
+            pids.append(pid_t(try! String(contentsOf: file, encoding: .utf8))!)
+        }
+        store.stop()
+        await waitUntil { pids.allSatisfy { kill($0, 0) != 0 } }
+        assert(store.refreshing.isEmpty)
+        print("Menu-open refresh, overlapping requests, latest-result ordering, and stop checks passed.")
+    }
+
+    @MainActor
+    static func waitUntil(_ condition: () -> Bool) async {
+        for _ in 0..<250 {
+            if condition() { return }
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        assert(condition(), "Timed out waiting for the fake CLI")
     }
 }

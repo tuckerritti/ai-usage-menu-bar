@@ -1,104 +1,149 @@
 // !$*UTF8*$!
 {
 	archiveVersion = 1;
-	classes = {};
-	objectVersion = 77;
+	classes = {
+	};
+	objectVersion = 71;
 	objects = {
-		A10000000000000000000001 = {
-			isa = PBXProject;
-			attributes = { BuildIndependentTargetsInParallel = YES; LastUpgradeCheck = 2660; };
-			buildConfigurationList = A10000000000000000000010;
-			compatibilityVersion = "Xcode 16.0";
-			developmentRegion = en;
-			hasScannedForEncodings = 0;
-			knownRegions = (en, Base);
-			mainGroup = A10000000000000000000002;
-			preferredProjectObjectVersion = 77;
-			productRefGroup = A10000000000000000000004;
-			projectDirPath = "";
-			projectRoot = "";
-			targets = (A10000000000000000000006);
+
+/* Begin PBXFileReference section */
+		A10000000000000000000005 /* AI Usage.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "AI Usage.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		A10000000000000000000003 /* AIUsage */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = AIUsage; sourceTree = "<group>"; };
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		A10000000000000000000008 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
 		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
 		A10000000000000000000002 = {
 			isa = PBXGroup;
-			children = (A10000000000000000000003, A10000000000000000000004);
+			children = (
+				A10000000000000000000003 /* AIUsage */,
+				A10000000000000000000004 /* Products */,
+			);
 			sourceTree = "<group>";
 		};
-		A10000000000000000000003 = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			path = AIUsage;
-			sourceTree = "<group>";
-		};
-		A10000000000000000000004 = {
+		A10000000000000000000004 /* Products */ = {
 			isa = PBXGroup;
-			children = (A10000000000000000000005);
+			children = (
+				A10000000000000000000005 /* AI Usage.app */,
+			);
 			name = Products;
 			sourceTree = "<group>";
 		};
-		A10000000000000000000005 = {
-			isa = PBXFileReference;
-			explicitFileType = wrapper.application;
-			includeInIndex = 0;
-			path = "AI Usage.app";
-			sourceTree = BUILT_PRODUCTS_DIR;
-		};
-		A10000000000000000000006 = {
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		A10000000000000000000006 /* AIUsage */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = A10000000000000000000011;
-			buildPhases = (A10000000000000000000007, A10000000000000000000008, A10000000000000000000009);
-			buildRules = ();
-			dependencies = ();
-			fileSystemSynchronizedGroups = (A10000000000000000000003);
+			buildConfigurationList = A10000000000000000000011 /* Build configuration list for PBXNativeTarget "AIUsage" */;
+			buildPhases = (
+				A10000000000000000000007 /* Sources */,
+				A10000000000000000000008 /* Frameworks */,
+				A10000000000000000000009 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				A10000000000000000000003 /* AIUsage */,
+			);
 			name = AIUsage;
-			packageProductDependencies = ();
+			packageProductDependencies = (
+			);
 			productName = "AI Usage";
-			productReference = A10000000000000000000005;
+			productReference = A10000000000000000000005 /* AI Usage.app */;
 			productType = "com.apple.product-type.application";
 		};
-		A10000000000000000000007 = { isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
-		A10000000000000000000008 = { isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
-		A10000000000000000000009 = { isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
-		A10000000000000000000010 = {
-			isa = XCConfigurationList;
-			buildConfigurations = (A10000000000000000000012, A10000000000000000000013);
-			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Release;
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		A10000000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 2660;
+			};
+			buildConfigurationList = A10000000000000000000010 /* Build configuration list for PBXProject "AIUsage" */;
+			compatibilityVersion = "Xcode 16.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = A10000000000000000000002;
+			productRefGroup = A10000000000000000000004 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				A10000000000000000000006 /* AIUsage */,
+			);
 		};
-		A10000000000000000000011 = {
-			isa = XCConfigurationList;
-			buildConfigurations = (A10000000000000000000014, A10000000000000000000015);
-			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Release;
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		A10000000000000000000009 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
 		};
-		A10000000000000000000012 = {
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		A10000000000000000000007 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		A10000000000000000000012 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CLANG_ENABLE_MODULES = YES;
+				DEBUG_INFORMATION_FORMAT = dwarf;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				SDKROOT = macosx;
-				SWIFT_VERSION = 5.0;
-				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
-				DEBUG_INFORMATION_FORMAT = dwarf;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
 			};
 			name = Debug;
 		};
-		A10000000000000000000013 = {
+		A10000000000000000000013 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CLANG_ENABLE_MODULES = YES;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				SDKROOT = macosx;
-				SWIFT_VERSION = 5.0;
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_OPTIMIZATION_LEVEL = "-O";
-				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				SWIFT_VERSION = 5.0;
 			};
 			name = Release;
 		};
-		A10000000000000000000014 = {
+		A10000000000000000000014 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
@@ -115,9 +160,10 @@
 			};
 			name = Debug;
 		};
-		A10000000000000000000015 = {
+		A10000000000000000000015 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
@@ -134,6 +180,28 @@
 			};
 			name = Release;
 		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		A10000000000000000000010 /* Build configuration list for PBXProject "AIUsage" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A10000000000000000000012 /* Debug */,
+				A10000000000000000000013 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A10000000000000000000011 /* Build configuration list for PBXNativeTarget "AIUsage" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A10000000000000000000014 /* Debug */,
+				A10000000000000000000015 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
 	};
-	rootObject = A10000000000000000000001;
+	rootObject = A10000000000000000000001 /* Project object */;
 }

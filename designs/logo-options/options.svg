@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="888" height="888" viewBox="0 0 888 888" role="img" aria-labelledby="title">
+<title id="title">Four white serif A logo options on black</title>
+<style>text {font-family: -apple-system, BlinkMacSystemFont, Helvetica, Arial, sans-serif; fill: #151515} .label {font-size: 20px; font-weight: 600} .detail {font-size: 15px; fill: #666}</style>
+<rect width="888" height="888" fill="#f7f7f5"/>
+<text x="74" y="64" font-size="28" font-weight="600">AI Usage</text>
+<text x="74" y="94" font-size="16" fill="#666">Single-letter studies · white serif on black</text>
+<defs><symbol id="option-0" viewBox="0 0 512 512"><rect width="512" height="512" rx="108" fill="#000"/>
+<path fill="#fff" transform="matrix(0.474 0 0 -0.474 92.874 410.000)" d="M679.199 0.000 L367.188 0.000 L367.188 44.922 Q406.738 44.922 424.805 50.537 Q442.871 56.152 442.871 77.148 Q442.871 91.797 437.012 106.934 L405.762 185.059 L190.918 185.059 L174.805 142.090 Q161.133 105.957 161.133 89.844 Q161.133 60.547 183.838 52.734 Q206.543 44.922 236.816 44.922 L236.816 0.000 L8.789 0.000 L8.789 44.922 Q36.133 44.922 55.176 55.176 Q74.219 65.430 91.553 93.994 Q108.887 122.559 128.906 174.805 L319.824 674.805 L366.211 674.805 L567.871 159.180 Q589.844 104.492 600.098 85.205 Q610.352 65.918 628.418 55.420 Q646.484 44.922 679.199 44.922 Z M388.184 232.910 L296.875 463.867 L209.961 232.910 Z"/></symbol>
+<symbol id="option-1" viewBox="0 0 512 512"><rect width="512" height="512" rx="108" fill="#000"/>
+<path fill="#fff" transform="matrix(0.395 0 0 -0.395 105.877 396.173)" d="M303.000 569.000 L421.000 296.000 L191.000 296.000 Z M-25.000 14.000 L-25.000 0.000 L164.000 0.000 L164.000 14.000 L75.000 14.000 L186.000 282.000 L426.000 282.000 L542.000 14.000 L449.000 14.000 L449.000 0.000 L785.000 0.000 L785.000 14.000 L699.000 14.000 L384.000 740.000 L357.000 740.000 L59.000 14.000 Z"/></symbol>
+<symbol id="option-2" viewBox="0 0 512 512"><rect width="512" height="512" rx="108" fill="#000"/>
+<path fill="#fff" transform="matrix(0.394 0 0 -0.394 106.763 388.282)" d="M785.645 0.000 L408.203 0.000 L408.203 38.086 Q434.570 40.039 470.215 47.607 Q505.859 55.176 505.859 66.406 Q505.859 70.312 505.127 75.195 Q504.395 80.078 500.977 88.379 L441.895 231.934 L202.637 231.934 Q194.336 211.914 184.326 185.059 Q174.316 158.203 166.992 137.207 Q157.715 109.863 156.006 97.656 Q154.297 85.449 154.297 80.566 Q154.297 64.941 177.979 53.955 Q201.660 42.969 256.836 38.086 L256.836 0.000 L-27.344 0.000 L-27.344 38.086 Q-11.230 39.062 9.033 43.213 Q29.297 47.363 41.016 54.688 Q61.035 66.406 74.951 83.496 Q88.867 100.586 98.145 124.023 Q154.785 261.230 211.670 398.926 Q268.555 536.621 337.402 702.637 L435.059 702.637 Q530.762 467.285 584.961 330.566 Q639.160 193.848 677.246 104.004 Q683.594 89.355 693.359 77.393 Q703.125 65.430 721.191 54.688 Q734.863 46.875 752.930 42.969 Q770.996 39.062 785.645 38.086 Z M421.875 280.273 L321.289 531.250 L222.168 280.273 Z"/></symbol>
+<symbol id="option-3" viewBox="0 0 512 512"><rect width="512" height="512" rx="108" fill="#000"/>
+<path fill="#fff" transform="matrix(0.475 0 0 -0.475 132.058 410.000)" d="M597.168 44.922 L583.984 0.000 L283.203 0.000 L296.875 44.922 Q334.473 44.922 354.980 53.711 Q375.488 62.500 384.277 85.693 Q393.066 108.887 393.066 152.832 L393.066 235.840 L185.059 235.840 L113.770 131.836 Q87.891 93.262 87.891 76.172 Q87.891 44.922 147.949 44.922 L175.781 44.922 L162.109 0.000 L-75.195 0.000 L-61.035 44.922 Q-27.344 47.363 6.104 78.369 Q39.551 109.375 79.102 165.039 L437.988 673.828 L522.949 673.828 L516.113 122.070 Q516.113 89.355 523.438 73.486 Q530.762 57.617 547.852 51.270 Q564.941 44.922 597.168 44.922 Z M397.949 540.039 L217.773 280.762 L393.066 280.762 Z"/></symbol></defs>
+<use href="#option-0" x="74" y="142" width="256" height="256"/>
+<text x="74" y="433" class="label">01  Classic</text>
+<text x="74" y="457" class="detail">Baskerville Semibold</text>
+<use href="#option-0" x="356" y="366" width="32" height="32"/>
+<use href="#option-0" x="398" y="382" width="16" height="16"/>
+<use href="#option-1" x="482" y="142" width="256" height="256"/>
+<text x="482" y="433" class="label">02  High contrast</text>
+<text x="482" y="457" class="detail">Didot Bold</text>
+<use href="#option-1" x="764" y="366" width="32" height="32"/>
+<use href="#option-1" x="806" y="382" width="16" height="16"/>
+<use href="#option-2" x="74" y="514" width="256" height="256"/>
+<text x="74" y="805" class="label">03  Sturdy</text>
+<text x="74" y="829" class="detail">Georgia Bold</text>
+<use href="#option-2" x="356" y="738" width="32" height="32"/>
+<use href="#option-2" x="398" y="754" width="16" height="16"/>
+<use href="#option-3" x="482" y="514" width="256" height="256"/>
+<text x="482" y="805" class="label">04  Italic</text>
+<text x="482" y="829" class="detail">Baskerville Semibold Italic</text>
+<use href="#option-3" x="764" y="738" width="32" height="32"/>
+<use href="#option-3" x="806" y="754" width="16" height="16"/>
+<text x="74" y="862" class="detail">Vector outlines · small previews at 32 px and 16 px</text>
+</svg>

@@ -1,6 +1,10 @@
 import AppKit
 import SwiftUI
 
+extension UsageReading {
+    var remainingPercent: Double { 100 - usedPercent }
+}
+
 extension UsageMetric {
     var provider: UsageProvider {
         self == .codexWeekly ? .codex : .claude
@@ -31,7 +35,7 @@ struct MetricState {
     var error: String?
 
     var percentage: String {
-        reading.map { "\(Int($0.usedPercent.rounded()))%" } ?? "—"
+        reading.map { "\(Int($0.remainingPercent.rounded()))%" } ?? "—"
     }
 
     var isStale: Bool {
@@ -51,14 +55,19 @@ struct MetricState {
 @MainActor
 final class UsageStore: ObservableObject {
     @Published private(set) var metrics: [UsageMetric: MetricState] = [:]
-    @Published private(set) var refreshing: Set<UsageProvider> = []
     @Published private(set) var errors: [UsageProvider: String] = [:]
     @Published private(set) var lastAttempt: Date?
-    private var requests: [UsageProvider: Task<Void, Never>] = [:]
+    @Published private var requests: [UUID: (provider: UsageProvider, task: Task<Void, Never>)] = [:]
+    private var generation = 0
     private var polling: Task<Void, Never>?
+    private let shellPath: Task<Result<String, ShellPathError>, Never>
     private var wakeObserver: NSObjectProtocol?
+    private var windowObserver: NSObjectProtocol?
 
-    init() {
+    var refreshing: Set<UsageProvider> { Set(requests.values.map(\.provider)) }
+
+    init(shellPath: Task<Result<String, ShellPathError>, Never> = Task { await ShellPath.load() }) {
+        self.shellPath = shellPath
         polling = Task { [weak self] in
             while !Task.isCancelled {
                 self?.refresh()
@@ -70,23 +79,40 @@ final class UsageStore: ObservableObject {
         ) { [weak self] _ in
             Task { @MainActor in self?.refresh() }
         }
+        // The dropdown is our only window; SwiftUI can cache it between openings.
+        windowObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.refresh() }
+        }
     }
 
     func state(_ metric: UsageMetric) -> MetricState {
         metrics[metric] ?? MetricState()
     }
 
-    func refreshIfNeeded() {
-        if Date().timeIntervalSince(lastAttempt ?? .distantPast) >= 60 { refresh() }
-    }
-
     func refresh() {
-        for provider in UsageProvider.allCases where requests[provider] == nil {
-            refreshing.insert(provider)
-            lastAttempt = Date()
-            requests[provider] = Task { [weak self] in
-                let result = await UsageClient.fetch(provider)
-                guard let self, !Task.isCancelled else { return }
+        generation += 1
+        let generation = generation
+        lastAttempt = Date()
+        for provider in UsageProvider.allCases {
+            let id = UUID()
+            let task = Task { [weak self, shellPath] in
+                let path = await shellPath.value
+                guard !Task.isCancelled else {
+                    self?.requests[id] = nil
+                    return
+                }
+                let result: UsageFetchResult
+                switch path {
+                case .success(let path):
+                    result = await UsageClient.fetch(provider, path: path)
+                case .failure(let error):
+                    result = UsageFetchResult(readings: [:], error: error.localizedDescription)
+                }
+                guard let self else { return }
+                defer { self.requests[id] = nil }
+                guard !Task.isCancelled, generation == self.generation else { return }
                 let fetchedAt = Date()
                 for metric in UsageMetric.allCases where metric.provider == provider {
                     if let reading = result.readings[metric] {
@@ -98,25 +124,28 @@ final class UsageStore: ObservableObject {
                     }
                 }
                 self.errors[provider] = result.error
-                self.refreshing.remove(provider)
-                self.requests[provider] = nil
             }
+            requests[id] = (provider, task)
         }
     }
 
     func stop() {
+        shellPath.cancel()
         polling?.cancel()
-        requests.values.forEach { $0.cancel() }
+        generation += 1
+        requests.values.forEach { $0.task.cancel() }
+        requests.removeAll()
         UsageClient.cancelAll()
         if let wakeObserver {
             NSWorkspace.shared.notificationCenter.removeObserver(wakeObserver)
         }
+        if let windowObserver { NotificationCenter.default.removeObserver(windowObserver) }
     }
 
     var accessibilityLabel: String {
         [.claudeSession, .codexWeekly].map { (metric: UsageMetric) in
             let value = state(metric)
-            let description = value.reading == nil ? "Unavailable" : "\(value.percentage) used\(value.isStale ? ", stale" : "")"
+            let description = value.reading == nil ? "Unavailable" : "\(value.percentage) remaining\(value.isStale ? ", stale" : "")"
             return "\(metric.accessibilityName): \(description)"
         }.joined(separator: "; ")
     }

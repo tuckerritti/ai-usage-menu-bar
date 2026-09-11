@@ -20,12 +20,12 @@ struct UsageFetchResult: Sendable {
 }
 
 enum UsageClient {
-    private static let commands = ActiveCommands()
+    private static let commands = ActiveCommands.shared
 
-    static func fetch(_ provider: UsageProvider) async -> UsageFetchResult {
-        let command = CLICommand(provider: provider)
-        commands.insert(command)
-        defer { commands.remove(command) }
+    static func fetch(_ provider: UsageProvider, path: String? = ProcessInfo.processInfo.environment["PATH"]) async -> UsageFetchResult {
+        let command = CLICommand(provider: provider, path: path)
+        commands.insert(command.managed)
+        defer { commands.remove(command.managed) }
         return await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
                 DispatchQueue.global(qos: .utility).async {
@@ -33,7 +33,7 @@ enum UsageClient {
                 }
             }
         } onCancel: {
-            command.cancel()
+            command.managed.cancel()
         }
     }
 
@@ -126,12 +126,13 @@ enum TerminalText {
     }
 }
 
-private final class ActiveCommands: @unchecked Sendable {
+final class ActiveCommands: @unchecked Sendable {
+    static let shared = ActiveCommands()
     private let lock = NSLock()
-    private var entries: [UUID: CLICommand] = [:]
+    private var entries: [UUID: ManagedProcess] = [:]
 
-    func insert(_ command: CLICommand) { lock.lock(); defer { lock.unlock() }; entries[command.id] = command }
-    func remove(_ command: CLICommand) { lock.lock(); defer { lock.unlock() }; entries[command.id] = nil }
+    func insert(_ command: ManagedProcess) { lock.lock(); defer { lock.unlock() }; entries[command.id] = command }
+    func remove(_ command: ManagedProcess) { lock.lock(); defer { lock.unlock() }; entries[command.id] = nil }
     func cancelAll() {
         lock.lock()
         let current = Array(entries.values)
@@ -140,15 +141,19 @@ private final class ActiveCommands: @unchecked Sendable {
     }
 }
 
-private final class CLICommand: @unchecked Sendable {
+final class ManagedProcess: @unchecked Sendable {
     let id = UUID()
-    private let provider: UsageProvider
+    let process = Process()
     private let lock = NSLock()
-    private let process = Process()
     private var cancelled = false
     private var ownedGroup: (pid: pid_t, seconds: UInt64, microseconds: UInt64)?
 
-    init(provider: UsageProvider) { self.provider = provider }
+    func launch() throws -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard !cancelled else { return false }
+        try process.run()
+        return true
+    }
 
     func cancel() {
         lock.lock()
@@ -157,16 +162,76 @@ private final class CLICommand: @unchecked Sendable {
         lock.unlock()
     }
 
-    private var isCancelled: Bool {
+    var isCancelled: Bool {
         lock.lock(); defer { lock.unlock() }
         return cancelled
     }
 
+    func stop() {
+        lock.lock(); defer { lock.unlock() }
+        stopLocked()
+    }
+
+    func recordOwnedGroup(_ child: pid_t) {
+        lock.lock(); defer { lock.unlock() }
+        if ownedGroup == nil, process.isRunning, Self.descendants(of: process.processIdentifier).contains(child),
+           child > 1, getpgid(child) == child, child != getpgrp(), let start = Self.startTime(of: child) {
+            ownedGroup = (child, start.0, start.1)
+        }
+    }
+
+    private func stopLocked() {
+        if process.isRunning {
+            let root = process.processIdentifier
+            let children = Self.descendants(of: root)
+            // Discover children even before the marker arrives; never signal an inherited/app process group.
+            for child in children.reversed() where child > 1 {
+                if getpgid(child) == child, child != getpgrp() { kill(-child, SIGKILL) }
+                kill(child, SIGKILL)
+            }
+            kill(root, SIGKILL)
+        }
+        // A wrapper can exit first. Check the recorded leader's birth time to avoid a recycled PID.
+        if let group = ownedGroup, let start = Self.startTime(of: group.pid),
+           start == (group.seconds, group.microseconds), group.pid > 1, group.pid != getpgrp(), getpgid(group.pid) == group.pid {
+            kill(-group.pid, SIGKILL)
+        }
+    }
+
+    private static func startTime(of pid: pid_t) -> (UInt64, UInt64)? {
+        var info = proc_bsdinfo()
+        let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+        guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size else { return nil }
+        return (info.pbi_start_tvsec, info.pbi_start_tvusec)
+    }
+
+    private static func descendants(of parent: pid_t) -> [pid_t] {
+        // ponytail: probes normally have few children; size dynamically if shell startup exceeds 256.
+        var pids = [pid_t](repeating: 0, count: 256)
+        let count = pids.withUnsafeMutableBytes { proc_listchildpids(parent, $0.baseAddress, Int32($0.count)) }
+        guard count > 0 else { return [] }
+        let children = Array(pids.prefix(Int(count))).filter { $0 > 1 }
+        return children + children.flatMap { descendants(of: $0) }
+    }
+}
+
+private final class CLICommand: @unchecked Sendable {
+    let managed = ManagedProcess()
+    private let provider: UsageProvider
+    private let path: String?
+    private var process: Process { managed.process }
+
+    init(provider: UsageProvider, path: String?) {
+        self.provider = provider
+        self.path = path
+    }
+
     func run() -> UsageFetchResult {
         var environment = ProcessInfo.processInfo.environment
+        environment["PATH"] = path
         let workingDirectory = FileManager.default.temporaryDirectory
         guard let executable = Self.resolve(provider.rawValue, path: environment["PATH"], relativeTo: workingDirectory) else {
-            return failure("\(provider.rawValue) was not found on PATH. Add the installed CLI to the app's PATH and relaunch.")
+            return failure("\(provider.rawValue) was not found on your shell's PATH. Update your shell configuration and relaunch AI Usage.")
         }
         let input = Pipe()
         let output = Pipe()
@@ -190,12 +255,11 @@ private final class CLICommand: @unchecked Sendable {
                 "-c", #"history.persistence="none""#, "-c", "check_for_update_on_startup=false", "-c", "disable_paste_burst=true"]
         }
         process.environment = environment
-        lock.lock()
-        if cancelled { lock.unlock(); return failure("Refresh cancelled.") }
-        do { try process.run() } catch { lock.unlock(); return failure("Could not launch \(provider.rawValue): \(error.localizedDescription)") }
-        lock.unlock()
+        do {
+            guard try managed.launch() else { return failure("Refresh cancelled.") }
+        } catch { return failure("Could not launch \(provider.rawValue): \(error.localizedDescription)") }
         defer {
-            lock.lock(); stopLocked(); lock.unlock()
+            managed.stop()
             try? input.fileHandleForWriting.close()
             try? output.fileHandleForReading.close()
         }
@@ -212,7 +276,7 @@ private final class CLICommand: @unchecked Sendable {
         var successfulResult: UsageFetchResult?
         var quitAt: Date?
         while Date().timeIntervalSince(started) < 20 {
-            if isCancelled { return failure("Refresh cancelled.") }
+            if managed.isCancelled { return failure("Refresh cancelled.") }
             let count = read(fd, &buffer, buffer.count)
             if count > 0 {
                 data.append(contentsOf: buffer.prefix(count))
@@ -280,44 +344,6 @@ private final class CLICommand: @unchecked Sendable {
     private func recordOwnedGroup(in text: String) {
         guard let range = text.range(of: "__AI_USAGE_CHILD__"),
               let child = pid_t(text[range.upperBound...].prefix(while: \.isNumber)) else { return }
-        lock.lock(); defer { lock.unlock() }
-        if ownedGroup == nil, process.isRunning, Self.descendants(of: process.processIdentifier).contains(child),
-           child > 1, getpgid(child) == child, child != getpgrp(), let start = Self.startTime(of: child) {
-            ownedGroup = (child, start.0, start.1)
-        }
-    }
-
-    private func stopLocked() {
-        if process.isRunning {
-            let root = process.processIdentifier
-            let children = Self.descendants(of: root)
-            // Discover children even before the marker arrives; never signal an inherited/app process group.
-            for child in children.reversed() where child > 1 {
-                if getpgid(child) == child, child != getpgrp() { kill(-child, SIGKILL) }
-                kill(child, SIGKILL)
-            }
-            kill(root, SIGKILL)
-        }
-        // A wrapper can exit first. Check the recorded leader's birth time to avoid a recycled PID.
-        if let group = ownedGroup, let start = Self.startTime(of: group.pid),
-           start == (group.seconds, group.microseconds), group.pid > 1, group.pid != getpgrp(), getpgid(group.pid) == group.pid {
-            kill(-group.pid, SIGKILL)
-        }
-    }
-
-    private static func startTime(of pid: pid_t) -> (UInt64, UInt64)? {
-        var info = proc_bsdinfo()
-        let size = Int32(MemoryLayout<proc_bsdinfo>.size)
-        guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size else { return nil }
-        return (info.pbi_start_tvsec, info.pbi_start_tvusec)
-    }
-
-    private static func descendants(of parent: pid_t) -> [pid_t] {
-        // ponytail: disabled CLI integrations keep this below 256 children; size dynamically if that changes.
-        var pids = [pid_t](repeating: 0, count: 256)
-        let count = pids.withUnsafeMutableBytes { proc_listchildpids(parent, $0.baseAddress, Int32($0.count)) }
-        guard count > 0 else { return [] }
-        let children = Array(pids.prefix(Int(count))).filter { $0 > 1 }
-        return children + children.flatMap { descendants(of: $0) }
+        managed.recordOwnedGroup(child)
     }
 }

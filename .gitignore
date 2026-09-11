@@ -2,3 +2,5 @@ build/
 .DS_Store
 xcuserdata/
 *.xcuserstate
+*.p12
+*.p8
