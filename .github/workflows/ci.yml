@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  # https://github.com/actions/runner-images/blob/main/images/macos/macos-15-Readme.md
+  DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  checks:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Verify Xcode
+        run: |
+          xcodebuild -version
+          xcodebuild -version | grep -Fx 'Xcode 26.3'
+
+      - name: Run checks
+        run: |
+          ./Tests/check.sh --lifecycle
+          ./Tests/ReleaseChecks.sh
+          ruby ./Tests/WorkflowChecks.rb
+
+      - name: Build universal app
+        run: |
+          xcodebuild -quiet -project AIUsage.xcodeproj -scheme AIUsage \
+            -configuration Release -derivedDataPath build/ci \
+            'ARCHS=arm64 x86_64' ONLY_ACTIVE_ARCH=NO \
+            CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- \
+            CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO build
+          lipo 'build/ci/Build/Products/Release/AI Usage.app/Contents/MacOS/AI Usage' \
+            -verify_arch arm64 x86_64
