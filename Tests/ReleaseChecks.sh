@@ -137,3 +137,11 @@ run_case invalid failure
 run_case staple failure
 run_case gatekeeper failure
 printf 'Release mock checks passed: accepted artifact/checksum; runtime, entitlement, notarization, stapling, and Gatekeeper failure gates.\n'
+
+# Homebrew cask generation from a published checksum file.
+printf 'c1f1359a19663f06e4c4b886634e17a139dea513a14ffd58860e61d8455c0453  AI-Usage-1.2.3-42.dmg\n' >"$test_dir/cask.sha256"
+cask=$("$repo_dir/scripts/homebrew-cask.sh" "$test_dir/cask.sha256")
+[[ $cask == *'version "1.2.3,42"'* && $cask == *'sha256 "c1f1359a19663f06e4c4b886634e17a139dea513a14ffd58860e61d8455c0453"'* ]]
+printf 'not-a-checksum  AI-Usage-1.2.3-42.dmg\n' >"$test_dir/bad.sha256"
+! "$repo_dir/scripts/homebrew-cask.sh" "$test_dir/bad.sha256" 2>/dev/null
+printf 'Homebrew cask checks passed.\n'

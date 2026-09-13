@@ -15,8 +15,16 @@ workflows = %w[ci release].map do |name|
 end
 ci, release = workflows
 check(!ci.to_s.include?('secrets.'), 'CI must not reference signing secrets')
-check(release.fetch('on', release[true]) == { 'push' => { 'tags' => ['v*'] } }, 'Release must run only for pushed tags')
+check(release.fetch('on', release[true]) == { 'push' => { 'tags' => ['v*'] }, 'workflow_dispatch' => nil }, 'Only tag pushes and manual Homebrew updates may trigger the workflow')
+check(release['jobs']['release']['if'] == "github.event_name == 'push' && github.ref_type == 'tag'", 'App releases must run only for pushed tags')
 check(release['concurrency']['cancel-in-progress'] == false, 'Releases must not cancel each other')
+homebrew = release['jobs']['homebrew']
+tap_checkout = homebrew['steps'].find { |step| step.dig('with', 'repository') == 'tuckerritti/homebrew-tap' }
+check(tap_checkout, 'Homebrew must check out the fixed tap repository')
+check(tap_checkout['with'].slice('path', 'ref', 'ssh-key', 'persist-credentials') == {
+  'path' => 'homebrew-tap', 'ref' => 'main',
+  'ssh-key' => '${{ secrets.HOMEBREW_TAP_SSH_KEY }}', 'persist-credentials' => true
+}, 'Only the tap checkout may retain its dedicated SSH key for pushing')
 workflows.each do |workflow|
   check(workflow['permissions'] == { 'contents' => 'read' }, 'Default token permissions must be read-only')
   workflow['jobs'].each_value do |job|
@@ -24,7 +32,9 @@ workflows.each do |workflow|
     job['steps'].each do |step|
       if step['uses']
         check(step['uses'].match?(/\Aactions\/checkout@[a-f0-9]{40}\z/), 'Checkout must be the only action and pinned by SHA')
-        check(step.dig('with', 'persist-credentials') == false, 'Checkout must not persist Git credentials')
+        unless job.equal?(homebrew) && step.equal?(tap_checkout)
+          check(step.dig('with', 'persist-credentials') == false, 'Source checkout must not persist Git credentials')
+        end
       end
       next unless step['run']
       check(!step['run'].include?('${{'), 'Pass GitHub context through environment variables')

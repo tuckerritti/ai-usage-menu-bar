@@ -3,6 +3,7 @@ name: Release
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -150,3 +151,51 @@ jobs:
           if [[ -f "$NOTARYTOOL_KEYCHAIN" ]]; then
             security delete-keychain "$NOTARYTOOL_KEYCHAIN"
           fi
+
+  homebrew:
+    needs: release
+    if: ${{ !cancelled() && (needs.release.result == 'success' || github.event_name == 'workflow_dispatch') }}
+    runs-on: macos-15
+    timeout-minutes: 10
+    concurrency:
+      group: homebrew-tap
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Generate cask for latest release
+        run: |
+          tag=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)
+          [[ "$tag" =~ ^v[0-9]+(\.[0-9]+)*$ ]] || { printf 'Expected a numeric release tag.\n' >&2; exit 1; }
+          printf 'RELEASE_TAG=%s\n' "$tag" >>"$GITHUB_ENV"
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" \
+            --pattern "AI-Usage-${tag#v}-*.dmg.sha256" --dir "$RUNNER_TEMP/homebrew"
+          shopt -s nullglob
+          checksums=("$RUNNER_TEMP"/homebrew/*.dmg.sha256)
+          [[ ${#checksums[@]} -eq 1 ]]
+          ./scripts/homebrew-cask.sh "${checksums[0]}" >"$RUNNER_TEMP/homebrew/ai-usage.rb"
+
+      - name: Check out Homebrew tap
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: tuckerritti/homebrew-tap
+          ref: main
+          path: homebrew-tap
+          ssh-key: ${{ secrets.HOMEBREW_TAP_SSH_KEY }}
+          persist-credentials: true
+
+      - name: Update Homebrew tap
+        working-directory: homebrew-tap
+        run: |
+          mkdir -p Casks
+          cp "$RUNNER_TEMP/homebrew/ai-usage.rb" Casks/ai-usage.rb
+          git add Casks/ai-usage.rb
+          if git diff --cached --quiet; then exit 0; fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m "ai-usage $RELEASE_TAG"
+          git push origin HEAD:main
