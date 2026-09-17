@@ -39,6 +39,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         popover.delegate = self
 
         store.objectWillChange
+            .merge(with: settings.objectWillChange)
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.updateStatusItem() }
             .store(in: &subscriptions)
@@ -78,18 +79,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             ("ClaudeLogo", store.state(.claudeSession)),
             ("ChatGPTLogo", store.state(.codexWeekly))
         ]
-        let font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium)
+        let stacked = settings.stackedMenuBar
+        let font = NSFont.monospacedDigitSystemFont(ofSize: stacked ? 9 : 12, weight: .medium)
         let textWidths = values.map {
             ($0.1.percentage as NSString).size(withAttributes: [.font: font]).width.rounded(.up)
         }
         let logoToTextGap: CGFloat = 3
-        let width = textWidths.reduce((14 + logoToTextGap) * 2 + 6, +)
-        let image = NSImage(size: NSSize(width: width, height: 18), flipped: false) { _ in
+        let logoSize: CGFloat = stacked ? 9 : 14
+        let width = stacked
+            ? logoSize + logoToTextGap + (textWidths.max() ?? 0)
+            : textWidths.reduce((logoSize + logoToTextGap) * 2 + 6, +)
+        let image = NSImage(size: NSSize(width: width, height: stacked ? 22 : 18), flipped: false) { _ in
             // AppKit supplies the appearance for each menu-bar snapshot.
             var x: CGFloat = 0
             for (index, value) in values.enumerated() {
+                // Unflipped AppKit coordinates place Claude in the upper row.
+                let rowY: CGFloat = stacked ? CGFloat(1 - index) * 11 : 0
                 if let logo = NSImage(named: value.0) {
-                    let rect = NSRect(x: x, y: 2, width: 14, height: 14)
+                    let rect = NSRect(x: x, y: rowY + (stacked ? 1 : 2), width: logoSize, height: logoSize)
                     NSGraphicsContext.saveGraphicsState()
                     logo.draw(in: rect)
                     NSColor.labelColor.setFill()
@@ -100,12 +107,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                     .font: font,
                     .foregroundColor: value.1.color
                 ]
-                (value.1.percentage as NSString).draw(at: NSPoint(x: x + 14 + logoToTextGap, y: 1.5), withAttributes: attributes)
+                (value.1.percentage as NSString).draw(at: NSPoint(x: x + logoSize + logoToTextGap, y: rowY + (stacked ? 0 : 1.5)), withAttributes: attributes)
                 if value.1.isStale {
                     NSColor.systemOrange.setFill()
-                    NSBezierPath(ovalIn: NSRect(x: x + 10, y: 0, width: 4, height: 4)).fill()
+                    let dotSize: CGFloat = stacked ? 3 : 4
+                    NSBezierPath(ovalIn: NSRect(x: x + logoSize - dotSize, y: rowY, width: dotSize, height: dotSize)).fill()
                 }
-                x += 14 + logoToTextGap + textWidths[index] + 6
+                if !stacked {
+                    x += logoSize + logoToTextGap + textWidths[index] + 6
+                }
             }
             return true
         }

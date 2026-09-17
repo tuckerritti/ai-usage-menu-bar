@@ -33,6 +33,18 @@ final class SMAppService {
 struct StartupSettingsChecks {
     @MainActor
     static func main() {
+        let suite = "StartupSettingsChecks.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let layoutSettings = StartupSettings(defaults: defaults)
+        assert(!layoutSettings.stackedMenuBar, "Basic must be the default layout")
+        layoutSettings.stackedMenuBar = true
+        assert(StartupSettings(defaults: defaults).stackedMenuBar, "Stacked must survive relaunch")
+        layoutSettings.refresh()
+        assert(layoutSettings.stackedMenuBar, "Refreshing login status must preserve the layout")
+        layoutSettings.stackedMenuBar = false
+        assert(!StartupSettings(defaults: defaults).stackedMenuBar, "Basic must survive relaunch")
+
         let service = SMAppService.mainApp
         let settings = StartupSettings()
         assert(settings.status == .notFound && !settings.isEnabled)
@@ -89,6 +101,6 @@ struct StartupSettingsChecks {
         assert(!settings.isEnabled)
         assert(service.registrations == registrations && service.unregistrations == unregistrations,
                "Initialization and external status refreshes must not change login items")
-        print("Startup settings status, registration, approval, and error checks passed.")
+        print("Menu bar layout persistence and startup settings checks passed.")
     }
 }

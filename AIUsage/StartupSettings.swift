@@ -5,6 +5,15 @@ import SwiftUI
 final class StartupSettings: ObservableObject {
     @Published private(set) var status = SMAppService.mainApp.status
     @Published private(set) var errorMessage: String?
+    @Published var stackedMenuBar: Bool {
+        didSet { defaults.set(stackedMenuBar, forKey: "stackedMenuBar") }
+    }
+    private let defaults: UserDefaults
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        stackedMenuBar = defaults.bool(forKey: "stackedMenuBar")
+    }
 
     var isEnabled: Bool { status == .enabled }
 
@@ -42,6 +51,14 @@ struct SettingsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
+            Picker("Menu bar layout", selection: $settings.stackedMenuBar) {
+                Text("Basic").tag(false)
+                Text("Stacked").tag(true)
+            }
+            .pickerStyle(.segmented)
+            .controlSize(.small)
+            .accessibilityHint("Stacked shows Claude above Codex.")
+
             Toggle("Launch on startup", isOn: Binding(
                 get: { settings.isEnabled },
                 set: { settings.setEnabled($0) }
