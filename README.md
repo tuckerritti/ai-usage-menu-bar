@@ -4,6 +4,8 @@ A native macOS menu bar app showing Claude and Codex usage beside their logos. C
 
 ![AI Usage menu bar dropdown](docs/screenshot.png)
 
+Open the settings gear and choose **Stacked** to show Claude above Codex in the menu bar. **Basic** keeps them side by side and is the default. Your choice is saved between launches.
+
 ## Install
 
 ```sh
