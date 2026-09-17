@@ -22,7 +22,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private let settings = StartupSettings()
     private var statusItem: NSStatusItem?
     private let popover = NSPopover()
-    private var appearanceObservation: NSKeyValueObservation?
     private var subscriptions: Set<AnyCancellable> = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -31,9 +30,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         if let button = item.button {
             button.target = self
             button.action = #selector(statusItemClicked(_:))
-            appearanceObservation = button.observe(\.effectiveAppearance) { [weak self] _, _ in
-                Task { @MainActor in self?.updateStatusItem() }
-            }
         }
 
         let content = NSHostingController(rootView: UsagePanel(store: store, settings: settings))
@@ -72,12 +68,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     private func updateStatusItem() {
         guard let button = statusItem?.button else { return }
-        button.image = menuBarImage(appearance: button.effectiveAppearance)
+        button.image = menuBarImage()
         button.setAccessibilityLabel(store.accessibilityLabel)
         button.toolTip = store.accessibilityLabel
     }
 
-    private func menuBarImage(appearance: NSAppearance) -> NSImage {
+    private func menuBarImage() -> NSImage {
         let values: [(String, MetricState)] = [
             ("ClaudeLogo", store.state(.claudeSession)),
             ("ChatGPTLogo", store.state(.codexWeekly))
@@ -89,28 +85,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         let logoToTextGap: CGFloat = 3
         let width = textWidths.reduce((14 + logoToTextGap) * 2 + 6, +)
         let image = NSImage(size: NSSize(width: width, height: 18), flipped: false) { _ in
-            appearance.performAsCurrentDrawingAppearance {
-                var x: CGFloat = 0
-                for (index, value) in values.enumerated() {
-                    if let logo = NSImage(named: value.0) {
-                        let rect = NSRect(x: x, y: 2, width: 14, height: 14)
-                        NSGraphicsContext.saveGraphicsState()
-                        logo.draw(in: rect)
-                        NSColor.labelColor.setFill()
-                        rect.fill(using: .sourceAtop)
-                        NSGraphicsContext.restoreGraphicsState()
-                    }
-                    let attributes: [NSAttributedString.Key: Any] = [
-                        .font: font,
-                        .foregroundColor: value.1.color
-                    ]
-                    (value.1.percentage as NSString).draw(at: NSPoint(x: x + 14 + logoToTextGap, y: 1.5), withAttributes: attributes)
-                    if value.1.isStale {
-                        NSColor.systemOrange.setFill()
-                        NSBezierPath(ovalIn: NSRect(x: x + 10, y: 0, width: 4, height: 4)).fill()
-                    }
-                    x += 14 + logoToTextGap + textWidths[index] + 6
+            // AppKit supplies the appearance for each menu-bar snapshot.
+            var x: CGFloat = 0
+            for (index, value) in values.enumerated() {
+                if let logo = NSImage(named: value.0) {
+                    let rect = NSRect(x: x, y: 2, width: 14, height: 14)
+                    NSGraphicsContext.saveGraphicsState()
+                    logo.draw(in: rect)
+                    NSColor.labelColor.setFill()
+                    rect.fill(using: .sourceAtop)
+                    NSGraphicsContext.restoreGraphicsState()
                 }
+                let attributes: [NSAttributedString.Key: Any] = [
+                    .font: font,
+                    .foregroundColor: value.1.color
+                ]
+                (value.1.percentage as NSString).draw(at: NSPoint(x: x + 14 + logoToTextGap, y: 1.5), withAttributes: attributes)
+                if value.1.isStale {
+                    NSColor.systemOrange.setFill()
+                    NSBezierPath(ovalIn: NSRect(x: x + 10, y: 0, width: 4, height: 4)).fill()
+                }
+                x += 14 + logoToTextGap + textWidths[index] + 6
             }
             return true
         }
