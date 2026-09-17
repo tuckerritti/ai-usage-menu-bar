@@ -28,7 +28,16 @@ See [ATTRIBUTIONS.md](ATTRIBUTIONS.md) for logo sources.
 
 ## Release
 
-Increment the version and build number in Xcode, push the changes to `main`, then push a matching tag such as `v1.0.2`. The Release workflow signs and notarizes the app, publishes its DMG, and updates [the Homebrew tap](https://github.com/tuckerritti/homebrew-tap).
+Every push to `main` releases its tip commit after checks pass. The Release workflow creates the next patch tag, such as `v1.0.2` after `v1.0.1`, signs and notarizes the app, publishes its DMG, and updates [the Homebrew tap](https://github.com/tuckerritti/homebrew-tap).
+
+The app version comes from the tag and its build number comes from the GitHub Actions run number. No Xcode version edits or manual tagging are needed. Releases queue and run one at a time; retrying a failed run reuses its tag and build number unless a newer commit has already been tagged. Existing releases are never overwritten.
+
+Once the workflow succeeds, quit AI Usage and run:
+
+```sh
+brew update
+brew upgrade --cask tuckerritti/tap/ai-usage
+```
 
 To sync the tap with the latest published release without building again:
 

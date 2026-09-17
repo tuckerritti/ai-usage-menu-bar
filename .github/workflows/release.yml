@@ -2,15 +2,16 @@ name: Release
 
 on:
   push:
-    tags: ['v*']
+    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release
   cancel-in-progress: false
+  queue: max
 
 env:
   DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
@@ -21,13 +22,12 @@ defaults:
 
 jobs:
   release:
-    if: github.event_name == 'push' && github.ref_type == 'tag'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: macos-15
     timeout-minutes: 60
     permissions:
       contents: write
     env:
-      RELEASE_TAG: ${{ github.ref_name }}
       NOTARYTOOL_PROFILE: ai-usage-notary
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -43,32 +43,15 @@ jobs:
 
       - name: Verify release source
         id: source
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
-          if [[ "$GITHUB_REF_TYPE" != tag || ! "$RELEASE_TAG" =~ ^v[0-9]+(\.[0-9]+)*$ ]]; then
-            printf 'Release requires a numeric version tag.\n' >&2
-            exit 1
-          fi
+          [[ "$GITHUB_REF" == refs/heads/main ]] \
+            || { printf 'Release requires a push to main.\n' >&2; exit 1; }
           commit=$(git rev-parse HEAD)
-          [[ "$commit" == "$(git rev-parse "$GITHUB_SHA^{commit}")" ]]
-          [[ "$commit" == "$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")" ]]
+          [[ "$commit" == "$(git rev-parse "$GITHUB_SHA^{commit}")" ]] \
+            || { printf 'The checkout does not match the triggering commit.\n' >&2; exit 1; }
           git merge-base --is-ancestor "$commit" refs/remotes/origin/main
           xcodebuild -version
           xcodebuild -version | grep -Fx 'Xcode 26.3'
-          xcodebuild -project AIUsage.xcodeproj -scheme AIUsage -configuration Release \
-            -showBuildSettings -json >"$RUNNER_TEMP/release-settings.json"
-          version=$(jq -er '[.[] | select(.target == "AIUsage")][0].buildSettings.MARKETING_VERSION' \
-            "$RUNNER_TEMP/release-settings.json")
-          [[ "$RELEASE_TAG" == "v$version" ]] || { printf 'Tag must equal v%s.\n' "$version" >&2; exit 1; }
-          remote_commit=$(gh api "repos/$GITHUB_REPOSITORY/commits/refs%2Ftags%2F$RELEASE_TAG" --jq .sha)
-          [[ "$remote_commit" == "$commit" ]] || { printf 'The remote tag moved.\n' >&2; exit 1; }
-          gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq '.[].tag_name' \
-            >"$RUNNER_TEMP/existing-releases.txt"
-          if grep -Fx -- "$RELEASE_TAG" "$RUNNER_TEMP/existing-releases.txt" >/dev/null; then
-            printf 'A release already exists for %s; it will not be overwritten.\n' "$RELEASE_TAG" >&2
-            exit 1
-          fi
 
       - name: Run checks before loading credentials
         id: checks
@@ -76,6 +59,36 @@ jobs:
           ./Tests/check.sh --lifecycle
           ./Tests/ReleaseChecks.sh
           ruby ./Tests/WorkflowChecks.rb
+
+      - name: Tag next patch release
+        id: tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          latest=$(git tag --list --sort=-version:refname \
+            | awk '/^v[0-9]+\.[0-9]+(\.[0-9]+)?$/ && !found { print; found=1 }')
+          if [[ -n "$latest" ]]; then
+            git merge-base --is-ancestor "refs/tags/$latest" "$GITHUB_SHA" \
+              || { printf 'A newer or unrelated commit is already tagged for release.\n' >&2; exit 1; }
+          fi
+          tag=$(git tag --points-at "$GITHUB_SHA" --sort=-version:refname \
+            | awk '/^v[0-9]+\.[0-9]+(\.[0-9]+)?$/ && !found { print; found=1 }')
+          if [[ -z "$tag" ]]; then
+            latest=${latest:-v0.0.0}
+            IFS=. read -r major minor patch <<< "${latest#v}"
+            tag="v$major.$minor.$((10#${patch:-0} + 1))"
+            gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
+              -f ref="refs/tags/$tag" -f sha="$GITHUB_SHA"
+          fi
+          remote_commit=$(gh api "repos/$GITHUB_REPOSITORY/commits/refs%2Ftags%2F$tag" --jq .sha)
+          [[ "$remote_commit" == "$GITHUB_SHA" ]] || { printf 'The remote tag moved.\n' >&2; exit 1; }
+          gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq '.[].tag_name' \
+            >"$RUNNER_TEMP/existing-releases.txt"
+          if grep -Fx -- "$tag" "$RUNNER_TEMP/existing-releases.txt" >/dev/null; then
+            printf 'A release already exists for %s; it will not be overwritten.\n' "$tag" >&2
+            exit 1
+          fi
+          printf 'RELEASE_TAG=%s\n' "$tag" >>"$GITHUB_ENV"
 
       - name: Install signing credentials
         id: credentials
@@ -117,6 +130,7 @@ jobs:
       - name: Build signed and notarized DMG
         env:
           DEVELOPER_ID_APPLICATION: ${{ vars.DEVELOPER_ID_APPLICATION }}
+          RELEASE_BUILD_NUMBER: ${{ github.run_number }}
         run: ./scripts/release.sh
 
       - name: Publish verified release

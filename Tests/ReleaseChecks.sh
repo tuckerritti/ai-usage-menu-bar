@@ -25,15 +25,25 @@ case "$tool" in
         printf '  1) MOCK "%s"\n  1 valid identities found\n' "$DEVELOPER_ID_APPLICATION"
         ;;
     xcodebuild)
+        version= build_number=
+        for argument in "$@"; do
+            case "$argument" in
+                MARKETING_VERSION=*) version=${argument#*=} ;;
+                CURRENT_PROJECT_VERSION=*) build_number=${argument#*=} ;;
+            esac
+        done
+        [[ -n "$version" && -n "$build_number" ]]
+        [[ $MOCK_MODE != version_mismatch ]] || version=0.0.0
+        [[ $MOCK_MODE != build_mismatch ]] || build_number=1
         app="$(after -derivedDataPath "$@")/Build/Products/Release/AI Usage.app"
         mkdir -p "$app/Contents/MacOS"
         printf 'fake binary' >"$app/Contents/MacOS/AI Usage"
-        cat >"$app/Contents/Info.plist" <<'PLIST'
+        cat >"$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-<key>CFBundleShortVersionString</key><string>1.2.3</string>
-<key>CFBundleVersion</key><string>42</string>
+<key>CFBundleShortVersionString</key><string>$version</string>
+<key>CFBundleVersion</key><string>$build_number</string>
 </dict></plist>
 PLIST
         ;;
@@ -104,12 +114,19 @@ done
 
 run_case() {
     local mode=$1 expected=$2 result=0
+    local metadata=("RELEASE_TAG=${3-v1.2.3}" "RELEASE_BUILD_NUMBER=${4-42}")
+    case "$mode" in
+        missing_tag) metadata=("${metadata[1]}") ;;
+        missing_build) metadata=("${metadata[0]}") ;;
+    esac
     local case_dir="$test_dir/$mode"
     mkdir "$case_dir"
-    PATH="$test_dir/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+    : >"$case_dir/commands"
+    env -u RELEASE_TAG -u RELEASE_BUILD_NUMBER \
+        PATH="$test_dir/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
         DEVELOPER_ID_APPLICATION='Developer ID Application: Mock Developer (MOCKTEAM01)' \
         NOTARYTOOL_PROFILE='mock-keychain-profile' RELEASE_DIR="$case_dir/releases" \
-        MOCK_DIR="$case_dir" MOCK_MODE="$mode" \
+        MOCK_DIR="$case_dir" MOCK_MODE="$mode" "${metadata[@]}" \
         "$repo_dir/scripts/release.sh" >"$case_dir/output" 2>&1 || result=$?
     local artifact="$case_dir/releases/AI-Usage-1.2.3-42.dmg"
     if [[ $expected == success ]]; then
@@ -123,7 +140,10 @@ run_case() {
         [[ $result -ne 0 && ! -e "$artifact" && ! -e "$artifact.sha256" ]] \
             || { cat "$case_dir/output"; printf 'Expected a closed release gate: %s\n' "$mode" >&2; exit 1; }
         case "$mode" in
-            runtime|entitlement) ! grep -F 'xcrun notarytool submit' "$case_dir/commands" >/dev/null ;;
+            missing_*|invalid_*|zero_build)
+                ! grep -F 'xcodebuild ' "$case_dir/commands" >/dev/null ;;
+            runtime|entitlement|version_mismatch|build_mismatch)
+                ! grep -F 'xcrun notarytool submit' "$case_dir/commands" >/dev/null ;;
             invalid) ! grep -F 'xcrun stapler staple' "$case_dir/commands" >/dev/null ;;
         esac
     fi
@@ -131,17 +151,25 @@ run_case() {
 
 run_case accepted success
 NOTARYTOOL_KEYCHAIN="$test_dir/runner signing.keychain-db" run_case custom_keychain success
+run_case missing_tag failure
+run_case missing_build failure
+run_case invalid_tag failure 'v1.2.3$(touch injected)'
+run_case zero_build failure v1.2.3 0
+run_case invalid_build failure v1.2.3 1.2
+run_case version_mismatch failure
+run_case build_mismatch failure
 run_case runtime failure
 run_case entitlement failure
 run_case invalid failure
 run_case staple failure
 run_case gatekeeper failure
-printf 'Release mock checks passed: accepted artifact/checksum; runtime, entitlement, notarization, stapling, and Gatekeeper failure gates.\n'
+printf 'Release mock checks passed: metadata, build overrides, artifact/checksum, and signing/notarization failure gates.\n'
 
 # Homebrew cask generation from a published checksum file.
-printf 'c1f1359a19663f06e4c4b886634e17a139dea513a14ffd58860e61d8455c0453  AI-Usage-1.2.3-42.dmg\n' >"$test_dir/cask.sha256"
-cask=$("$repo_dir/scripts/homebrew-cask.sh" "$test_dir/cask.sha256")
-[[ $cask == *'version "1.2.3,42"'* && $cask == *'sha256 "c1f1359a19663f06e4c4b886634e17a139dea513a14ffd58860e61d8455c0453"'* ]]
+checksum="$test_dir/accepted/releases/AI-Usage-1.2.3-42.dmg.sha256"
+read -r sha256 _ <"$checksum"
+cask=$("$repo_dir/scripts/homebrew-cask.sh" "$checksum")
+[[ $cask == *'version "1.2.3,42"'* && $cask == *"sha256 \"$sha256\""* ]]
 printf 'not-a-checksum  AI-Usage-1.2.3-42.dmg\n' >"$test_dir/bad.sha256"
 ! "$repo_dir/scripts/homebrew-cask.sh" "$test_dir/bad.sha256" 2>/dev/null
 printf 'Homebrew cask checks passed.\n'

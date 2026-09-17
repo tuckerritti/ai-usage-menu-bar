@@ -2,6 +2,7 @@
 set -euo pipefail
 
 # Credentials stay in Keychain. This script never accepts passwords or private keys.
+# RELEASE_TAG=v1.0.2 RELEASE_BUILD_NUMBER=4 \
 # DEVELOPER_ID_APPLICATION='Developer ID Application: Name (TEAMID)' \
 # NOTARYTOOL_PROFILE='ai-usage-notary' ./scripts/release.sh
 # Apple recommends notarizing/stapling the outermost distribution container:
@@ -9,6 +10,8 @@ set -euo pipefail
 
 fail() { printf 'Release failed: %s\n' "$*" >&2; exit 1; }
 [[ $# -eq 0 ]] || fail 'No arguments are supported; configure the environment variables shown in this script.'
+[[ ${RELEASE_TAG:-} =~ ^v[0-9]+(\.[0-9]+)*$ ]] || fail 'Set RELEASE_TAG to a numeric version tag, such as v1.0.2.'
+[[ ${RELEASE_BUILD_NUMBER:-} =~ ^[1-9][0-9]*$ ]] || fail 'Set RELEASE_BUILD_NUMBER to a positive integer.'
 : "${DEVELOPER_ID_APPLICATION:?Set DEVELOPER_ID_APPLICATION to the exact Developer ID Application certificate name.}"
 : "${NOTARYTOOL_PROFILE:?Set NOTARYTOOL_PROFILE to an existing notarytool Keychain profile.}"
 case "$DEVELOPER_ID_APPLICATION" in
@@ -40,6 +43,7 @@ trap 'exit 143' TERM
 printf 'Building universal Developer ID release…\n'
 xcodebuild -quiet -project "$repo_dir/AIUsage.xcodeproj" -scheme AIUsage \
     -configuration Release -derivedDataPath "$work_dir/build" \
+    "MARKETING_VERSION=${RELEASE_TAG#v}" "CURRENT_PROJECT_VERSION=$RELEASE_BUILD_NUMBER" \
     'ARCHS=arm64 x86_64' ONLY_ACTIVE_ARCH=NO \
     CODE_SIGN_STYLE=Manual "CODE_SIGN_IDENTITY=$DEVELOPER_ID_APPLICATION" \
     ENABLE_HARDENED_RUNTIME=YES CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO \
@@ -72,11 +76,8 @@ verify_app "$app"
 
 version=$(plutil -extract CFBundleShortVersionString raw -o - "$app/Contents/Info.plist")
 build_number=$(plutil -extract CFBundleVersion raw -o - "$app/Contents/Info.plist")
-for component in "$version" "$build_number"; do
-    case "$component" in
-        ''|*[!A-Za-z0-9._-]*) fail 'The app version and build number must be set and suitable for a release filename.' ;;
-    esac
-done
+[[ "$version" == "${RELEASE_TAG#v}" && "$build_number" == "$RELEASE_BUILD_NUMBER" ]] \
+    || fail 'The built app version and build number do not match the release metadata.'
 filename="AI-Usage-$version-$build_number.dmg"
 artifact="$release_dir/$filename"
 [[ ! -e "$artifact" && ! -e "$artifact.sha256" ]] || fail "An artifact already exists at $artifact; increment the version/build or use a different RELEASE_DIR."
