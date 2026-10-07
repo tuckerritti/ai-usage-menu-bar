@@ -290,7 +290,8 @@ private final class CLICommand: @unchecked Sendable {
                     recordOwnedGroup(in: raw)
                     let text = TerminalText.clean(raw)
                     // The first prompt is painted while the model is still loading and drops input.
-                    if statusTypedAt == nil, text.range(of: #"model:[ \t]+(?!loading\b)\S+"#, options: .regularExpression) != nil {
+                    // Older CLIs print "model: <name>"; newer ones drop "loading" from the version header once ready.
+                    if statusTypedAt == nil, text.range(of: #"model:[ \t]+(?!loading\b)\S+|OpenAI Codex \(v[^)\n]*\)[ \t]*\n"#, options: .regularExpression) != nil {
                         send("/status", to: input)
                         statusTypedAt = Date()
                     }
