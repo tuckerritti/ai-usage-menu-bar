@@ -35,7 +35,34 @@ struct UsageChecks {
         assert(parsedCodex.error == nil)
         assert(parsedCodex.readings[.codexWeekly]?.usedPercent == 63)
         assert(parsedCodex.readings[.codexWeekly]?.resetDescription == "08:59 on 17 Sep")
-        assert(UsageClient.parseCodex(String(codex.dropLast())).readings.isEmpty)
+        // Codex 0.159+ draws /status without a box and paints the composer onto the reading's row.
+        let boxless = """
+          Tip: Hourly limit: example hint drawn before status  › Ask Codex to do anything
+        /status
+          >_ OpenAI Codex (v0.161.0)
+          Account:             Pro
+          Weekly limit:        [███████████████████░] 93% left\u{1B}[2m (resets 12:18 on 14 Oct)\u{1B}[39m  › Ask Codex to do anything
+        """
+        let parsedBoxless = UsageClient.parseCodex(boxless)
+        assert(parsedBoxless.error == nil)
+        assert(parsedBoxless.readings[.codexWeekly]?.usedPercent == 7)
+        assert(parsedBoxless.readings[.codexWeekly]?.resetDescription == "12:18 on 14 Oct")
+        // A cold /status only requests a refresh; earlier replies must not mask the retry's reading.
+        let refreshed = "/status\n  Limits:              refresh requested; run /status again shortly.  › \n" + boxless
+        assert(UsageClient.parseCodex(refreshed).readings[.codexWeekly]?.usedPercent == 7)
+        assert(UsageClient.parseCodex(boxless + "\n/status\n  Limits: refresh requested; run /status again shortly.\n› ").readings.isEmpty)
+        // Codex can finish the stream with only cursor moves and a blank after the reading.
+        let boxlessEnd = "/status\n  Weekly limit:        \u{1B}[22m[███░] 93% left\u{1B}[2m (resets 12:18 on 14 Oct)\u{1B}[39m\u{1B}[0m\u{1B}[r\u{1B}[24;1H \u{1B}[26;3H\u{1B}[?25h"
+        assert(UsageClient.parseCodex(boxlessEnd).readings[.codexWeekly]?.resetDescription == "12:18 on 14 Oct")
+        assert(UsageClient.parseCodex("/status\n  Weekly limit: [██] 93% left\n› ").readings[.codexWeekly]?.usedPercent == 7)
+        // Every byte prefix the app can read mid-stream yields no reading or the complete one, never a missing reset time.
+        for (stream, used, reset) in [(codex, 63.0, "08:59 on 17 Sep"), (boxless, 7.0, "12:18 on 14 Oct"), (boxlessEnd, 7.0, "12:18 on 14 Oct")] {
+            let bytes = Data(stream.utf8)
+            for count in 1...bytes.count {
+                guard let reading = UsageClient.parseCodex(String(decoding: bytes.prefix(count), as: UTF8.self)).readings[.codexWeekly] else { continue }
+                assert(reading.usedPercent == used && reading.resetDescription == reset, "Partial output must not become a reading")
+            }
+        }
         let onlySpark = codex.components(separatedBy: .newlines).filter { !$0.contains("37%") }.joined(separator: "\n")
         assert(UsageClient.parseCodex(onlySpark).readings.isEmpty)
         assert(UsageClient.parseCodex(codex.replacingOccurrences(of: "37%", with: "137%")).readings.isEmpty)
@@ -137,7 +164,21 @@ struct UsageChecks {
         try! FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: codex.path)
         let earlyExit = await UsageClient.fetch(.codex)
         assert(earlyExit.readings.isEmpty && earlyExit.error != nil)
-        print("CLI PATH, cancellation, child cleanup, and early-exit checks passed.")
+        try! #"""
+        #!/bin/sh
+        printf 'OpenAI Codex (v0.161.0)\n'
+        read -r status
+        read -r status
+        printf '  Limits: refresh requested; run /status again shortly.\n'
+        read -r status
+        printf '  Weekly limit: [████░░░░] 40%% left (resets 10:00 on 9 Oct)\n› '
+        read -r quit
+        """#.write(to: codex, atomically: true, encoding: .utf8)
+        let retried = await UsageClient.fetch(.codex)
+        // The fake ignores the first /status like a starting Codex, then only requests a refresh.
+        assert(retried.error == nil && retried.readings[.codexWeekly]?.usedPercent == 60, "Unanswered and refresh-only /status must be retried")
+        try! FileManager.default.removeItem(at: codex) // Keep the slow fake out of the refresh checks below.
+        print("CLI PATH, cancellation, child cleanup, early-exit, and Codex refresh retry checks passed.")
         await checkRefresh(in: directory)
     }
 

@@ -66,25 +66,23 @@ enum UsageClient {
     }
 
     static func parseCodex(_ output: String) -> UsageFetchResult {
-        let text = TerminalText.clean(output)
-        // Only complete boxes count: startup hints and partially drawn status must not become readings.
-        let boxes = matches("(?s)╭[^╭╯]*╯", in: text)
-        for box in boxes.reversed() {
-            var mainLines: [String] = []
-            for line in box.components(separatedBy: .newlines) {
-                let row = line.trimmingCharacters(in: CharacterSet(charactersIn: "│ \t"))
-                let lower = row.lowercased()
-                if lower.contains(" limit:"), !lower.hasPrefix("weekly limit:"), !lower.hasPrefix("5h limit:") {
-                    break // Additional model quotas, including Spark, are separate from the main quota.
-                }
-                mainLines.append(row)
+        var rows = TerminalText.clean(output).components(separatedBy: .newlines).map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "│ \t")) }
+        // Codex 0.159 dropped the status box, so read only the reply to the latest /status echo; startup hints come before it.
+        if let echo = rows.lastIndex(of: "/status") { rows.removeFirst(echo + 1) }
+        var mainLines: [String] = []
+        for row in rows {
+            let lower = row.lowercased()
+            if lower.contains(" limit:"), !lower.hasPrefix("weekly limit:"), !lower.hasPrefix("5h limit:") {
+                break // Additional model quotas, including Spark, are separate from the main quota.
             }
-            let main = mainLines.joined(separator: "\n")
-            guard let values = captures("(?i)Weekly limit:[ \\t]*(?:\\[[^\\]\\r\\n]*\\][ \\t]*)?([0-9]+(?:\\.[0-9]+)?)%[ \\t]+left(?:[ \\t]*\\(resets[ \\t]+([^\\)\\r\\n]+)\\))?", in: main),
-                  let remaining = Double(values[0]), (0...100).contains(remaining) else { continue }
-            return UsageFetchResult(readings: [.codexWeekly: UsageReading(usedPercent: 100 - remaining, resetDescription: values[1].nilIfEmpty)], error: nil)
+            mainLines.append(row)
         }
-        return UsageFetchResult(readings: [:], error: "Codex did not report its weekly limit. Run codex /status in Terminal to check sign-in and CLI compatibility.")
+        // Reject a partially drawn row: a closed "(resets …)" ends it; without one, something other than "(resets" must follow.
+        guard let values = captures("(?i)Weekly limit:[ \\t]*(?:\\[[^\\]\\r\\n]*\\][ \\t]*)?([0-9]+(?:\\.[0-9]+)?)%[ \\t]+left(?:[ \\t]*\\(resets[ \\t]+([^\\)\\r\\n]+)\\)|(?=[ \\t]*[^ \\t(]))", in: mainLines.joined(separator: "\n")),
+              let remaining = Double(values[0]), (0...100).contains(remaining) else {
+            return UsageFetchResult(readings: [:], error: "Codex did not report its weekly limit. Run codex /status in Terminal to check sign-in and CLI compatibility.")
+        }
+        return UsageFetchResult(readings: [.codexWeekly: UsageReading(usedPercent: 100 - remaining, resetDescription: values[1].nilIfEmpty)], error: nil)
     }
 
     private static func captures(_ pattern: String, in text: String) -> [String]? {
@@ -92,13 +90,6 @@ enum UsageClient {
               let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) else { return nil }
         return (1..<match.numberOfRanges).map { index in
             Range(match.range(at: index), in: text).map { String(text[$0]) } ?? ""
-        }
-    }
-
-    private static func matches(_ pattern: String, in text: String) -> [String] {
-        guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
-        return regex.matches(in: text, range: NSRange(text.startIndex..., in: text)).compactMap {
-            Range($0.range, in: text).map { String(text[$0]) }
         }
     }
 }
@@ -114,7 +105,8 @@ private extension String {
 enum TerminalText {
     static func clean(_ text: String) -> String {
         var result = text
-        for pattern in ["\\x1B\\][^\\x07\\x1B]*(?:\\x07|\\x1B\\\\)", "\\x1B\\[[0-?]*[ -/]*[@-~]", "\\x1B[()][A-Z0-9]", "\\x1B[@-_]"] {
+        // The first pattern drops a sequence still split at the end of the stream, which the catch-all would otherwise half-strip.
+        for pattern in ["\\x1B(?:\\[[0-?]*[ -/]*|\\][^\\x07\\x1B]*\\x1B?|[()])?\\z", "\\x1B\\][^\\x07\\x1B]*(?:\\x07|\\x1B\\\\)", "\\x1B\\[[0-?]*[ -/]*[@-~]", "\\x1B[()][A-Z0-9]", "\\x1B[@-_]"] {
             result = result.replacingOccurrences(of: pattern, with: "", options: .regularExpression)
         }
         return result.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
@@ -271,7 +263,7 @@ private final class CLICommand: @unchecked Sendable {
         let started = Date()
         var queryCount = 0
         var statusTypedAt: Date?
-        var statusSubmitted = false
+        var statusSubmittedAt: Date?
         var successfulResult: UsageFetchResult?
         var quitAt: Date?
         while Date().timeIntervalSince(started) < 20 {
@@ -295,7 +287,7 @@ private final class CLICommand: @unchecked Sendable {
                         send("/status", to: input)
                         statusTypedAt = Date()
                     }
-                    if statusSubmitted, successfulResult == nil {
+                    if statusSubmittedAt != nil, successfulResult == nil {
                         let parsed = UsageClient.parseCodex(raw)
                         if parsed.error == nil {
                             successfulResult = parsed
@@ -305,9 +297,15 @@ private final class CLICommand: @unchecked Sendable {
                     }
                 }
             }
-            if let typed = statusTypedAt, !statusSubmitted, Date().timeIntervalSince(typed) >= 1 {
+            if let typed = statusTypedAt, statusSubmittedAt == nil, Date().timeIntervalSince(typed) >= 1 {
                 send("\r", to: input)
-                statusSubmitted = true
+                statusSubmittedAt = Date()
+            }
+            // Codex can drop input typed while it starts, and a cold /status only requests a refresh; ask again until limits arrive.
+            if successfulResult == nil, let submitted = statusSubmittedAt, Date().timeIntervalSince(submitted) >= 2 {
+                send("/status", to: input)
+                statusTypedAt = Date()
+                statusSubmittedAt = nil
             }
             if let quitAt, Date().timeIntervalSince(quitAt) > 1 { return successfulResult! }
             if !process.isRunning, count <= 0 {
