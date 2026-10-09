@@ -228,7 +228,13 @@ private final class CLICommand: @unchecked Sendable {
     func run() -> UsageFetchResult {
         var environment = ProcessInfo.processInfo.environment
         environment["PATH"] = path
-        let workingDirectory = FileManager.default.temporaryDirectory
+        // The CLIs index their working directory, and the shared temp folder holds thousands of files.
+        var workingDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("AI Usage", isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(at: workingDirectory, withIntermediateDirectories: true)
+        } catch {
+            workingDirectory = FileManager.default.temporaryDirectory
+        }
         guard let executable = Self.resolve(provider.rawValue, path: environment["PATH"], relativeTo: workingDirectory) else {
             return failure("\(provider.rawValue) was not found on your shell's PATH. Update your shell configuration and relaunch AI Usage.")
         }
