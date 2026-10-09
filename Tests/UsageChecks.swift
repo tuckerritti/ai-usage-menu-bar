@@ -22,34 +22,34 @@ struct UsageChecks {
         assert(UsageClient.parseClaude("Current session: -1% used").readings.isEmpty)
         assert(UsageClient.parseClaude(claude.replacingOccurrences(of: "(Fable)", with: "(Fable 5.1)")).readings[.claudeFable]?.usedPercent == 34)
 
+        setenv("TZ", "UTC", 1)
+        NSTimeZone.resetSystemTimeZone()
         let codex = """
-        /status
-        ╭────────────────────────────────────────────────────────────────╮
-        │  Weekly limit: [████░░░░] 37% left (resets 08:59 on 17 Sep)     │
-        │  Credits: 123 credits                                         │
-        │  GPT-5.3-Codex-Spark limit:                                    │
-        │  Weekly limit: [████████] 99% left (resets 09:00 on 18 Sep)     │
-        ╰────────────────────────────────────────────────────────────────╯
+        2026-10-09T12:00:00Z WARN codex_core: a log line on stderr
+        {"id":1,"result":{"userAgent":"codex","codexHome":"/tmp","platformFamily":"unix","platformOs":"macos"}}
+        {"method":"account/rateLimits/updated","params":{}}
+        {"id":2,"result":{"rateLimits":{"primary":{"usedPercent":12,"windowDurationMins":300,"resetsAt":1791990000},"secondary":{"usedPercent":63,"windowDurationMins":10080,"resetsAt":1792000000}}}}
         """
         let parsedCodex = UsageClient.parseCodex(codex)
-        assert(parsedCodex.error == nil)
-        assert(parsedCodex.readings[.codexWeekly]?.usedPercent == 63)
-        assert(parsedCodex.readings[.codexWeekly]?.resetDescription == "08:59 on 17 Sep")
-        assert(UsageClient.parseCodex(String(codex.dropLast())).readings.isEmpty)
-        let onlySpark = codex.components(separatedBy: .newlines).filter { !$0.contains("37%") }.joined(separator: "\n")
-        assert(UsageClient.parseCodex(onlySpark).readings.isEmpty)
-        assert(UsageClient.parseCodex(codex.replacingOccurrences(of: "37%", with: "137%")).readings.isEmpty)
-        assert(UsageClient.parseCodex(codex.replacingOccurrences(of: "37%", with: "0%")).readings[.codexWeekly]?.usedPercent == 100)
-        assert(UsageClient.parseCodex(codex.replacingOccurrences(of: "37%", with: "100%")).readings[.codexWeekly]?.usedPercent == 0)
+        assert(parsedCodex?.error == nil)
+        assert(parsedCodex?.readings[.codexWeekly]?.usedPercent == 63)
+        assert(parsedCodex?.readings[.codexWeekly]?.resetDescription == "5:46 PM on 14 Oct")
+        let weeklyOnly = #"{"id":2,"result":{"rateLimits":{"primary":{"usedPercent":62,"windowDurationMins":10080,"resetsAt":null},"secondary":null}}}"#
+        assert(UsageClient.parseCodex(weeklyOnly)?.readings[.codexWeekly]?.usedPercent == 62)
+        assert(UsageClient.parseCodex(weeklyOnly)?.readings[.codexWeekly]?.resetDescription == nil)
+        assert(UsageClient.parseCodex(String(codex.dropLast())) == nil, "A partially written reply is not an answer yet")
+        assert(UsageClient.parseCodex(codex.components(separatedBy: .newlines).dropLast().joined(separator: "\n")) == nil)
+        let noWeekly = UsageClient.parseCodex(codex.replacingOccurrences(of: "10080", with: "1440"))
+        assert(noWeekly?.readings.isEmpty == true && noWeekly?.error != nil)
+        assert(UsageClient.parseCodex(codex.replacingOccurrences(of: ":63,", with: ":101,"))?.readings.isEmpty == true)
+        assert(UsageClient.parseCodex(codex.replacingOccurrences(of: ":63,", with: ":100,"))?.readings[.codexWeekly]?.usedPercent == 100)
+        let signedOut = UsageClient.parseCodex(#"{"id":2,"error":{"code":-32600,"message":"not signed in"}}"#)
+        assert(signedOut?.readings.isEmpty == true && signedOut?.error?.contains("not signed in") == true)
+        unsetenv("TZ")
+        NSTimeZone.resetSystemTimeZone()
 
-        var stream = Data()
-        for fragment in ["\u{1B}[", "6", "n\u{1B}[3", "2m", codex, "\u{1B}[0m\u{1B}]0;private title", "\u{07}"] {
-            stream.append(contentsOf: fragment.utf8)
-        }
-        assert(TerminalText.cursorQueryCount(in: stream) == 1)
-        let cleaned = TerminalText.clean(String(decoding: stream, as: UTF8.self))
+        let cleaned = TerminalText.clean("\u{1B}[32m" + claude + "\u{1B}[0m\u{1B}]0;private title\u{07}")
         assert(!cleaned.contains("\u{1B}") && !cleaned.contains("private title"))
-        assert(UsageClient.parseCodex(cleaned).readings[.codexWeekly]?.usedPercent == 63)
         assert(UsageClient.parseClaude("\u{1B}[32m" + claude + "\u{1B}[0m").readings[.claudeFable]?.usedPercent == 34)
         for (percent, expected) in [(49.0, NSColor.systemGreen), (49.5, .systemGreen), (50, .systemOrange), (79, .systemOrange), (79.5, .systemOrange), (80, .systemRed)] {
             assert(MetricState(reading: UsageReading(usedPercent: percent, resetDescription: nil), updatedAt: Date()).color == expected)
@@ -148,7 +148,18 @@ struct UsageChecks {
         let blocked = await UsageClient.fetch(.claude)
         try! FileManager.default.removeItem(at: probeFolder)
         assert(blocked.readings[.claudeSession]?.usedPercent == 1, "Probes must still run when the probe folder can't be created")
-        print("CLI PATH, cancellation, child cleanup, early-exit, and working directory checks passed.")
+        try! #"""
+        #!/bin/sh
+        [ "$1" = app-server ] || exit 2
+        while IFS= read -r line; do
+            case $line in
+                *account/rateLimits/read*) printf '%s\n' '{"id":2,"result":{"rateLimits":{"primary":{"usedPercent":62,"windowDurationMins":10080,"resetsAt":null},"secondary":null}}}' ;;
+            esac
+        done
+        """#.write(to: codex, atomically: true, encoding: .utf8)
+        let served = await UsageClient.fetch(.codex)
+        assert(served.error == nil && served.readings[.codexWeekly]?.usedPercent == 62, "Codex app server reply must become a reading")
+        print("CLI PATH, cancellation, child cleanup, early-exit, working directory, and Codex app server checks passed.")
         await checkRefresh(in: directory)
     }
 

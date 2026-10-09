@@ -65,26 +65,32 @@ enum UsageClient {
         return UsageFetchResult(readings: readings, error: error)
     }
 
-    static func parseCodex(_ output: String) -> UsageFetchResult {
-        let text = TerminalText.clean(output)
-        // Only complete boxes count: startup hints and partially drawn status must not become readings.
-        let boxes = matches("(?s)╭[^╭╯]*╯", in: text)
-        for box in boxes.reversed() {
-            var mainLines: [String] = []
-            for line in box.components(separatedBy: .newlines) {
-                let row = line.trimmingCharacters(in: CharacterSet(charactersIn: "│ \t"))
-                let lower = row.lowercased()
-                if lower.contains(" limit:"), !lower.hasPrefix("weekly limit:"), !lower.hasPrefix("5h limit:") {
-                    break // Additional model quotas, including Spark, are separate from the main quota.
-                }
-                mainLines.append(row)
-            }
-            let main = mainLines.joined(separator: "\n")
-            guard let values = captures("(?i)Weekly limit:[ \\t]*(?:\\[[^\\]\\r\\n]*\\][ \\t]*)?([0-9]+(?:\\.[0-9]+)?)%[ \\t]+left(?:[ \\t]*\\(resets[ \\t]+([^\\)\\r\\n]+)\\))?", in: main),
-                  let remaining = Double(values[0]), (0...100).contains(remaining) else { continue }
-            return UsageFetchResult(readings: [.codexWeekly: UsageReading(usedPercent: 100 - remaining, resetDescription: values[1].nilIfEmpty)], error: nil)
+    static let codexRequests = [
+        #"{"id":1,"method":"initialize","params":{"clientInfo":{"name":"ai-usage","version":"1"}}}"#,
+        #"{"method":"initialized"}"#,
+        #"{"id":2,"method":"account/rateLimits/read","params":{"excludeResetCreditDetails":true}}"#
+    ].map { $0 + "\n" }.joined()
+
+    /// Reads the `codex app-server` reply to request 2; nil until that reply arrives.
+    static func parseCodex(_ output: String) -> UsageFetchResult? {
+        let replies = output.split(whereSeparator: \.isNewline).compactMap {
+            try? JSONDecoder().decode(CodexReply.self, from: Data($0.utf8))
         }
-        return UsageFetchResult(readings: [:], error: "Codex did not report its weekly limit. Run codex /status in Terminal to check sign-in and CLI compatibility.")
+        guard let reply = replies.first(where: { $0.id == 2 }) else { return nil }
+        if let error = reply.error {
+            return UsageFetchResult(readings: [:], error: "Codex could not read usage: \(error.message)")
+        }
+        let windows = [reply.result?.rateLimits.primary, reply.result?.rateLimits.secondary].compactMap { $0 }
+        guard let weekly = windows.first(where: { $0.windowDurationMins == 10_080 }), (0...100).contains(weekly.usedPercent) else {
+            return UsageFetchResult(readings: [:], error: "Codex did not report its weekly limit. Run codex /status in Terminal to check sign-in and CLI compatibility.")
+        }
+        let reset = weekly.resetsAt.map { seconds in
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.dateFormat = "h:mm a 'on' d MMM"
+            return formatter.string(from: Date(timeIntervalSince1970: seconds))
+        }
+        return UsageFetchResult(readings: [.codexWeekly: UsageReading(usedPercent: weekly.usedPercent, resetDescription: reset)], error: nil)
     }
 
     private static func captures(_ pattern: String, in text: String) -> [String]? {
@@ -94,13 +100,23 @@ enum UsageClient {
             Range(match.range(at: index), in: text).map { String(text[$0]) } ?? ""
         }
     }
+}
 
-    private static func matches(_ pattern: String, in text: String) -> [String] {
-        guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
-        return regex.matches(in: text, range: NSRange(text.startIndex..., in: text)).compactMap {
-            Range($0.range, in: text).map { String(text[$0]) }
-        }
+private struct CodexReply: Decodable {
+    struct Window: Decodable {
+        let usedPercent: Double
+        let windowDurationMins: Int?
+        let resetsAt: Double?
     }
+    struct Limits: Decodable {
+        let primary: Window?
+        let secondary: Window?
+    }
+    struct Result: Decodable { let rateLimits: Limits }
+    struct Failure: Decodable { let message: String }
+    let id: Int?
+    let result: Result?
+    let error: Failure?
 }
 
 private extension String {
@@ -118,10 +134,6 @@ enum TerminalText {
             result = result.replacingOccurrences(of: pattern, with: "", options: .regularExpression)
         }
         return result.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
-    }
-
-    static func cursorQueryCount(in data: Data) -> Int {
-        String(decoding: data, as: UTF8.self).components(separatedBy: "\u{1B}[6n").count - 1
     }
 }
 
@@ -145,7 +157,6 @@ final class ManagedProcess: @unchecked Sendable {
     let process = Process()
     private let lock = NSLock()
     private var cancelled = false
-    private var ownedGroup: (pid: pid_t, seconds: UInt64, microseconds: UInt64)?
 
     func launch() throws -> Bool {
         lock.lock(); defer { lock.unlock() }
@@ -171,37 +182,17 @@ final class ManagedProcess: @unchecked Sendable {
         stopLocked()
     }
 
-    func recordOwnedGroup(_ child: pid_t) {
-        lock.lock(); defer { lock.unlock() }
-        if ownedGroup == nil, process.isRunning, Self.descendants(of: process.processIdentifier).contains(child),
-           child > 1, getpgid(child) == child, child != getpgrp(), let start = Self.startTime(of: child) {
-            ownedGroup = (child, start.0, start.1)
-        }
-    }
-
     private func stopLocked() {
         if process.isRunning {
             let root = process.processIdentifier
             let children = Self.descendants(of: root)
-            // Discover children even before the marker arrives; never signal an inherited/app process group.
+            // Never signal an inherited/app process group.
             for child in children.reversed() where child > 1 {
                 if getpgid(child) == child, child != getpgrp() { kill(-child, SIGKILL) }
                 kill(child, SIGKILL)
             }
             kill(root, SIGKILL)
         }
-        // A wrapper can exit first. Check the recorded leader's birth time to avoid a recycled PID.
-        if let group = ownedGroup, let start = Self.startTime(of: group.pid),
-           start == (group.seconds, group.microseconds), group.pid > 1, group.pid != getpgrp(), getpgid(group.pid) == group.pid {
-            kill(-group.pid, SIGKILL)
-        }
-    }
-
-    private static func startTime(of pid: pid_t) -> (UInt64, UInt64)? {
-        var info = proc_bsdinfo()
-        let size = Int32(MemoryLayout<proc_bsdinfo>.size)
-        guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size else { return nil }
-        return (info.pbi_start_tvsec, info.pbi_start_tvusec)
     }
 
     private static func descendants(of parent: pid_t) -> [pid_t] {
@@ -251,13 +242,10 @@ private final class CLICommand: @unchecked Sendable {
             process.executableURL = executable
             process.arguments = ["--safe-mode", "--permission-mode", "plan", "--tools", "", "--no-session-persistence", "--print", "/usage"]
         } else {
-            environment["TERM"] = "xterm-256color"
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/script")
-            process.arguments = ["-q", "/dev/null", "/bin/sh", "-c",
-                #"printf '__AI_USAGE_CHILD__%s\n' "$$"; /bin/stty rows 60 cols 180; exec "$@""#,
-                "ai-usage", executable.path, "--no-alt-screen", "-s", "read-only", "-a", "never",
-                "--disable", "hooks", "--disable", "plugins", "--disable", "apps", "-c", "mcp_servers={}",
-                "-c", #"history.persistence="none""#, "-c", "check_for_update_on_startup=false", "-c", "disable_paste_burst=true"]
+            // The app server answers rate limits without starting a session, MCP servers, or a terminal UI.
+            // Plugins would make it fetch marketplaces from GitHub on every start.
+            process.executableURL = executable
+            process.arguments = ["app-server", "--disable", "plugins"]
         }
         process.environment = environment
         do {
@@ -270,61 +258,28 @@ private final class CLICommand: @unchecked Sendable {
         }
         try? output.fileHandleForWriting.close()
         try? input.fileHandleForReading.close()
+        if provider == .codex { send(UsageClient.codexRequests, to: input) }
         let fd = output.fileHandleForReading.fileDescriptor
         _ = fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK)
         var data = Data()
         var buffer = [UInt8](repeating: 0, count: 16_384)
         let started = Date()
-        var queryCount = 0
-        var statusTypedAt: Date?
-        var statusSubmitted = false
-        var successfulResult: UsageFetchResult?
-        var quitAt: Date?
         while Date().timeIntervalSince(started) < 20 {
             if managed.isCancelled { return failure("Refresh cancelled.") }
             let count = read(fd, &buffer, buffer.count)
             if count > 0 {
                 data.append(contentsOf: buffer.prefix(count))
                 if data.count > 1_048_576 { return failure("\(provider.rawValue) returned too much output.") }
-                if provider == .codex {
-                    let queries = TerminalText.cursorQueryCount(in: data)
-                    while queryCount < queries {
-                        send("\u{1B}[1;1R", to: input)
-                        queryCount += 1
-                    }
-                    let raw = String(decoding: data, as: UTF8.self)
-                    recordOwnedGroup(in: raw)
-                    let text = TerminalText.clean(raw)
-                    // The first prompt is painted while the model is still loading and drops input.
-                    // Older CLIs print "model: <name>"; newer ones drop "loading" from the version header once ready.
-                    if statusTypedAt == nil, text.range(of: #"model:[ \t]+(?!loading\b)\S+|OpenAI Codex \(v[^)\n]*\)[ \t]*\n"#, options: .regularExpression) != nil {
-                        send("/status", to: input)
-                        statusTypedAt = Date()
-                    }
-                    if statusSubmitted, successfulResult == nil {
-                        let parsed = UsageClient.parseCodex(raw)
-                        if parsed.error == nil {
-                            successfulResult = parsed
-                            send("/quit\r", to: input)
-                            quitAt = Date()
-                        }
-                    }
-                }
+                if provider == .codex, let result = UsageClient.parseCodex(String(decoding: data, as: UTF8.self)) { return result }
             }
-            if let typed = statusTypedAt, !statusSubmitted, Date().timeIntervalSince(typed) >= 1 {
-                send("\r", to: input)
-                statusSubmitted = true
-            }
-            if let quitAt, Date().timeIntervalSince(quitAt) > 1 { return successfulResult! }
             if !process.isRunning, count <= 0 {
-                if let successfulResult { return successfulResult }
-                let parsed = provider == .claude ? UsageClient.parseClaude(String(decoding: data, as: UTF8.self)) : UsageClient.parseCodex(String(decoding: data, as: UTF8.self))
+                let text = String(decoding: data, as: UTF8.self)
+                let parsed = provider == .claude ? UsageClient.parseClaude(text) : UsageClient.parseCodex(text) ?? failure("Codex did not answer its usage request.")
                 if process.terminationStatus == 0 { return parsed }
                 return UsageFetchResult(readings: parsed.readings, error: "\(provider.rawValue) exited with status \(process.terminationStatus). Run its usage command in Terminal to check sign-in and CLI compatibility.")
             }
             if count <= 0 { usleep(20_000) }
         }
-        if let successfulResult { return successfulResult }
         let partial = provider == .claude ? UsageClient.parseClaude(String(decoding: data, as: UTF8.self)).readings : [:]
         return UsageFetchResult(readings: partial, error: "\(provider.rawValue) usage timed out. Run its usage command in Terminal to check sign-in or startup prompts.")
     }
@@ -345,11 +300,5 @@ private final class CLICommand: @unchecked Sendable {
                FileManager.default.isExecutableFile(atPath: url.path) { return url }
         }
         return nil
-    }
-
-    private func recordOwnedGroup(in text: String) {
-        guard let range = text.range(of: "__AI_USAGE_CHILD__"),
-              let child = pid_t(text[range.upperBound...].prefix(while: \.isNumber)) else { return }
-        managed.recordOwnedGroup(child)
     }
 }
