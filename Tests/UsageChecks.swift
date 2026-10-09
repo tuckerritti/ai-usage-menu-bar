@@ -142,6 +142,12 @@ struct UsageChecks {
         _ = await UsageClient.fetch(.claude)
         let probeDirectory = try! String(contentsOf: directory.appendingPathComponent("claude.cwd"), encoding: .utf8)
         assert(probeDirectory.hasSuffix("/AI Usage\n"), "CLIs must not run in the shared temp folder")
+        let probeFolder = FileManager.default.temporaryDirectory.appendingPathComponent("AI Usage")
+        try! FileManager.default.removeItem(at: probeFolder)
+        FileManager.default.createFile(atPath: probeFolder.path, contents: nil)
+        let blocked = await UsageClient.fetch(.claude)
+        try! FileManager.default.removeItem(at: probeFolder)
+        assert(blocked.readings[.claudeSession]?.usedPercent == 1, "Probes must still run when the probe folder can't be created")
         print("CLI PATH, cancellation, child cleanup, early-exit, and working directory checks passed.")
         await checkRefresh(in: directory)
     }
